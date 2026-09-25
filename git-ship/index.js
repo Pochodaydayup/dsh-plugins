@@ -105,9 +105,11 @@ const GUIDANCE = [
   '看到它（或用户说「提交并推送」「把这次改动提上去」）时，按下面做：',
   '1. 先调用 `git_ship_changes` 工具：它只读地告诉你当前分支 / upstream / 未提交文件，以及宿主记录到的**本次会话改过**的文件；',
   '2. 再用 `git status --porcelain` 核对当下的真实状态，**只提交本次会话改过的那些文件**，不要顺手带上无关的改动；',
-  '3. 写一条能说明这次改动意图的 commit message（中文），然后 `git add -- <这些文件> && git commit -m "<message>" && git push`（当前分支没有 upstream 时按需 `-u`）；',
-  '4. 分不清哪些算本次对话的改动、或遇到冲突 / 推送被拒，用 ask_user_question 问用户，别猜；',
-  '5. 做完汇报：commit hash、commit message、推送结果、以及剩下的 `git status`。',
+  '3. commit message **先对齐仓库已有风格**：跑 `git log --oneline -20`（必要时 `git log -20 --pretty=%s`）看历史 —— 语言、前缀、是否 Conventional Commits / emoji / 工单号，一律照它来，别自作主张换语言或加前缀；',
+  '   如果仓库还没有历史（刚 init、一个提交都没有）：用 `<type>: <描述>` 规范，type 取 feat / fix / chore / docs / refactor / test / perf / style / build / ci，描述用与用户交流相同的语言，需要时写成 `<type>(<scope>): <描述>`；一次提交只做一件事；',
+  '4. 然后 `git add -- <这些文件> && git commit -m "<message>" && git push`（当前分支没有 upstream 时按需 `-u`）；',
+  '5. 分不清哪些算本次对话的改动、或遇到冲突 / 推送被拒，用 ask_user_question 问用户，别猜；',
+  '6. 做完汇报：commit hash、commit message、推送结果、以及剩下的 `git status`。',
 ].join('');
 
 /**
