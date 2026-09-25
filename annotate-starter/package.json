@@ -1,0 +1,25 @@
+{
+  "name": "@local/dsh-annotate",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "右侧边栏「标注浏览器」tab：自建 webview + 刷新/标注/截图，点页面元素写批注；正文只留一行 chip，详情（selector/坐标/截图）存宿主侧，模型用 browser_annotations 工具读",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-sidebar-right",
+        "@deepseek-ai/dsh-client-ui-input-trigger"
+      ]
+    }
+  }
+}

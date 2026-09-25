@@ -1,0 +1,6 @@
+# 把插件自己插进 Loader 的 entry 列表。
+# - id: 这一行的稳定身份（改 id 等于换一个插件）
+# - name: 包名，必须和 package.json 的 name 一致，Loader 靠它找到 entry
+- insert:
+    - id: git-ship
+      name: '@local/dsh-git-ship'

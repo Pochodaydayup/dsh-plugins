@@ -1,0 +1,5 @@
+# 这一层由你的插件包贡献。id 是行 id（patch 用它定位，必须唯一）；
+# name 是包名，必须和 package.json 的 name 一致。
+- insert:
+    - id: annotate
+      name: '@local/dsh-annotate'

@@ -1,0 +1,23 @@
+{
+  "name": "@local/dsh-git-ship",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "输入框上方的「提交并推送」：把本次对话改过的文件（git status ∩ workspaceChanges 摘要）commit + push",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}
