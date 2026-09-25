@@ -26,14 +26,20 @@ window.__ModuleLoader__.load({
     // ────────────────────────────────────────────────────────────── 样式
 
     const CSS = `
-/* 对齐输入框卡片：卡片自己是「width:100% + max-width: var(--dsh-composer-card-max-width) + margin:0 auto」，
-   所以这里用**同一个变量**、同一套盒子规则即可 —— 官方 dock 里的 notice 元素就是这么写的：
-     .QJwAZG_notice{width:100%;max-width:var(--dsh-composer-card-max-width);margin-bottom:6px;...}
-   不要再去抄 side-clearance / dock-inset 那套公式：那是给「带内边距的卡片式工具条」用的，
-   而且窗口一放大就会露馅（卡片有 max-width，dock 若没有就必然错位）。 */
+/* 对齐输入框卡片 —— 照卡片真实的盒子推导，而不是猜公式。
+   卡片那一侧的真实规则（从 dsh-client-ui-conversation 的 CSS 里读出来）：
+     .QJwAZG_root { padding: 0 var(--dsh-composer-side-clearance) 4px; }   ← 外层内边距
+     .QJwAZG_card { box-sizing: border-box; width: 100%;
+                    max-width: var(--dsh-composer-card-max-width); }      ← 卡片本体
+   所以卡片的盒子 = min(栈宽 - 2c, 卡片上限)。我的条子和那层 root 是兄弟，
+   想要内容盒完全重合，就得「同一圈 padding + 上限补回那两圈」：
+     我的边框盒 = min(栈宽, 卡片上限 + 2c) → 内容盒 = min(栈宽 - 2c, 卡片上限)  ✓ 两者恒等
+   （c = --dsh-composer-side-clearance，16px；embedded 变体里是 8px，会自动跟着变。） */
 .git-ship-root { box-sizing: border-box; width: 100%;
-  max-width: var(--dsh-composer-card-max-width, 100%); margin: 0 auto;
-  display: flex; flex-direction: column; gap: 6px; font-size: 12px;
+  max-width: calc(var(--dsh-composer-card-max-width, 100%) + var(--dsh-composer-side-clearance, 16px)
+    + var(--dsh-composer-side-clearance, 16px));
+  padding: 0 var(--dsh-composer-side-clearance, 16px);
+  margin: 0 auto; display: flex; flex-direction: column; gap: 6px; font-size: 12px;
   color: var(--dsw-alias-label-primary); }
 .git-ship-bar { display: flex; align-items: center; gap: 8px; }
 .git-ship-btn { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
