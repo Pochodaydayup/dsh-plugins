@@ -26,13 +26,14 @@ window.__ModuleLoader__.load({
     // ────────────────────────────────────────────────────────────── 样式
 
     const CSS = `
-/* 和输入框对齐：官方 dock 条目（goal bar）就是这么算宽度的 —— 两侧各让出 side-clearance，
-   再各让出两个 dock-inset，然后 margin:0 auto 居中。 */
-.git-ship-root { box-sizing: border-box;
-  width: calc(100% - var(--dsh-composer-side-clearance, 16px) - var(--dsh-composer-side-clearance, 16px)
-    - var(--dsh-composer-dock-inset, 8px) - var(--dsh-composer-dock-inset, 8px)
-    - var(--dsh-composer-dock-inset, 8px) - var(--dsh-composer-dock-inset, 8px));
-  margin: 0 auto; display: flex; flex-direction: column; gap: 6px; font-size: 12px;
+/* 对齐输入框卡片：卡片自己是「width:100% + max-width: var(--dsh-composer-card-max-width) + margin:0 auto」，
+   所以这里用**同一个变量**、同一套盒子规则即可 —— 官方 dock 里的 notice 元素就是这么写的：
+     .QJwAZG_notice{width:100%;max-width:var(--dsh-composer-card-max-width);margin-bottom:6px;...}
+   不要再去抄 side-clearance / dock-inset 那套公式：那是给「带内边距的卡片式工具条」用的，
+   而且窗口一放大就会露馅（卡片有 max-width，dock 若没有就必然错位）。 */
+.git-ship-root { box-sizing: border-box; width: 100%;
+  max-width: var(--dsh-composer-card-max-width, 100%); margin: 0 auto;
+  display: flex; flex-direction: column; gap: 6px; font-size: 12px;
   color: var(--dsw-alias-label-primary); }
 .git-ship-bar { display: flex; align-items: center; gap: 8px; }
 .git-ship-btn { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
@@ -84,7 +85,6 @@ window.__ModuleLoader__.load({
       ensureCss();
       const sendNow = props.sendNow;
       const [busy, setBusy] = React.useState(false);
-
       const onClick = () => {
         if (busy || typeof sendNow !== 'function') return;
         setBusy(true);
