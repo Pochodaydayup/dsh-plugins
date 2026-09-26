@@ -68,8 +68,11 @@ window.__ModuleLoader__.load({
 .git-ship-btn:disabled { color: var(--dsw-alias-label-tertiary); cursor: default; }
 
 /* ── Git Diff tab ───────────────────────────────────────────────────── */
-.git-diff-root { display: flex; flex-direction: column; height: 100%; min-height: 0;
+/* 面板填满右侧栏，但**只有 .git-diff-scroll 一个滚动容器** ——
+   之前每段 body 都是 flex:1 + overflow:auto，结果互相挤压、外层又没人滚，就滚不动了。 */
+.git-diff-root { display: flex; flex-direction: column; flex: auto; height: 100%; min-height: 0; overflow: hidden;
   font-size: 12px; color: var(--dsw-alias-label-primary); }
+.git-diff-scroll { flex: 1; min-height: 0; overflow: auto; }
 .git-diff-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px;
   border-bottom: 1px solid var(--dsw-alias-border-l3); flex: none; min-width: 0; }
 .git-diff-repo { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -83,12 +86,6 @@ window.__ModuleLoader__.load({
 .git-diff-btn:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
 .git-diff-btn:disabled { color: var(--dsw-alias-label-tertiary); cursor: default; }
 .git-diff-btn.is-on { color: var(--dsw-alias-state-business-primary); border-color: currentColor; }
-.git-diff-files { flex: none; max-height: 38%; overflow: auto; border-bottom: 1px solid var(--dsw-alias-border-l3); }
-.git-diff-file { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 10px;
-  border: none; background: transparent; color: inherit; font: inherit; font-size: 12px; cursor: pointer;
-  text-align: left; min-width: 0; }
-.git-diff-file:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.git-diff-file.is-active { background: var(--dsw-alias-bg-layer-3); }
 .git-diff-status { flex: none; width: 18px; text-align: center; font-weight: 600; font-size: 11px;
   color: var(--dsw-alias-label-tertiary); }
 .git-diff-status.is-add { color: var(--dsw-alias-state-success-primary, var(--dsw-alias-state-business-primary)); }
@@ -99,8 +96,8 @@ window.__ModuleLoader__.load({
 .git-diff-counts { flex: none; font-size: 10px; color: var(--dsw-alias-label-tertiary); }
 .git-diff-dot { flex: none; width: 6px; height: 6px; border-radius: 999px;
   background: var(--dsw-alias-state-business-primary); }
-.git-diff-body { flex: 1; min-height: 0; overflow: auto; font-family: var(--dsw-font-family-mono, ui-monospace, monospace); }
-.git-diff-line { display: flex; white-space: pre; font-size: 11px; line-height: 17px; }
+.git-diff-body { font-family: var(--dsw-font-family-mono, ui-monospace, monospace); }
+.git-diff-line { display: flex; white-space: pre; min-width: max-content; font-size: 11px; line-height: 17px; }
 .git-diff-line > .git-diff-sign { flex: none; width: 18px; text-align: center; opacity: .6; user-select: none; }
 .git-diff-line > .git-diff-text { flex: 1; min-width: 0; padding-right: 10px; }
 .git-diff-line.is-add { background: color-mix(in srgb, var(--dsw-alias-state-success-primary, #2ea043) 14%, transparent); }
@@ -254,8 +251,9 @@ window.__ModuleLoader__.load({
     /**
      * 右侧边栏的「Git Diff」面板。
      *
-     * **默认把所有文件的 diff 全部展开**（像 `git diff` 的输出），顶部的文件列表是目录：
-     * 点一下跳到对应那一段，段头可以单独折叠。
+     * **默认把所有文件的 diff 全部展开**（像 `git diff` 的输出），每段段头可以单独折叠。
+     * 布局：header 固定，下面 `.git-diff-scroll` 是**唯一**的滚动容器（每段不要再自己加 overflow，
+     * 否则会互相挤压、外层反而滚不动）。
      * @param props - 框架给的 { useTabInfo } + inject 的 { sessionId, loadDiffs }。
      */
     function GitDiffTab(props) {
@@ -274,7 +272,6 @@ window.__ModuleLoader__.load({
       // loader 走 ref：inject 每次渲染都给新函数身份，进依赖会变成每次渲染重新取数
       const loaderRef = React.useRef(loadDiffs);
       loaderRef.current = loadDiffs;
-      const sectionRefs = React.useRef({});
       const loadedRef = React.useRef(false);
 
       const refresh = React.useCallback(async () => {
@@ -355,31 +352,7 @@ window.__ModuleLoader__.load({
         ]);
       }
 
-      // 目录：点一下跳到那一段
-      const toc = React.createElement('div', { key: 'toc', className: 'git-diff-files' },
-        files.map((file) => {
-          const badge = badgeOf(file.status);
-          return React.createElement('button', {
-            key: file.path,
-            type: 'button',
-            className: 'git-diff-file',
-            title: file.original === undefined ? file.path : `${file.original} → ${file.path}`,
-            onClick: () => {
-              const element = sectionRefs.current[file.path];
-              if (element !== undefined && typeof element.scrollIntoView === 'function') {
-                element.scrollIntoView({ block: 'start' });
-              }
-            },
-          }, [
-            React.createElement('span', { key: 's', className: 'git-diff-status ' + badge.className }, badge.text),
-            React.createElement('span', { key: 'p', className: 'git-diff-path' }, file.path),
-            file.fromChat === true ? React.createElement('span', { key: 'd', className: 'git-diff-dot', title: '本次对话改过' }) : null,
-            file.added === undefined ? null
-              : React.createElement('span', { key: 'n', className: 'git-diff-counts' }, `+${file.added}/-${file.deleted}`),
-          ].filter(Boolean));
-        }));
-
-      const nodes = [head, toc];
+      const nodes = [head];
       if (files.length === 0) {
         nodes.push(React.createElement('div', { key: 'none', className: 'git-diff-empty' }, '没有「本次对话」改过的文件'));
         return React.createElement('div', { className: 'git-diff-root' }, nodes);
@@ -419,7 +392,6 @@ window.__ModuleLoader__.load({
               key: 'h',
               type: 'button',
               className: 'git-diff-section-head',
-              ref: (element) => { sectionRefs.current[file.path] = element; },
               onClick: () => setCollapsed({ ...collapsed, [file.path]: !isCollapsed }),
               title: isCollapsed ? '展开' : '折叠',
             }, [
@@ -458,11 +430,12 @@ window.__ModuleLoader__.load({
         }
       }
 
-      nodes.push(React.createElement('div', { key: 'sections' }, sections));
+      const scroller = [React.createElement('div', { key: 'sections' }, sections)];
       if (stopped) {
-        nodes.push(React.createElement('div', { key: 'stopped', className: 'git-diff-note' },
+        scroller.push(React.createElement('div', { key: 'stopped', className: 'git-diff-note' },
           `已显示到 ${MAX_DIFF_LINES} 行的上限，其余文件没展开；可以折叠上面的文件，或用 git diff 看完整内容。`));
       }
+      nodes.push(React.createElement('div', { key: 'scroll', className: 'git-diff-scroll' }, scroller));
       return React.createElement('div', { className: 'git-diff-root' }, nodes);
     }
 
