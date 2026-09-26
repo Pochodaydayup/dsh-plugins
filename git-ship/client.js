@@ -515,7 +515,10 @@ window.__ModuleLoader__.load({
       // loader 走 ref：inject 每次渲染都给新函数身份，进依赖会变成每次渲染重新取数
       const loaderRef = React.useRef(loadDiffs);
       loaderRef.current = loadDiffs;
-      const loadedRef = React.useRef(false);
+      /** 上一次的可见状态：用来识别「隐藏 → 可见」这个转变。 */
+      const wasVisibleRef = React.useRef(false);
+      /** 上一次读到数据的时间（显示在头部，回答「这份 diff 是什么时候的」）。 */
+      const [loadedAt, setLoadedAt] = React.useState(0);
 
       const refresh = React.useCallback(async () => {
         setBusy(true);
@@ -524,6 +527,7 @@ window.__ModuleLoader__.load({
           setData(value);
           setPhase('ready');
           setError('');
+          setLoadedAt(Date.now());
         } catch (problem) {
           setPhase('error');
           setError(problem instanceof Error ? problem.message : String(problem));
@@ -532,13 +536,30 @@ window.__ModuleLoader__.load({
         }
       }, []);
 
-      // 挂载时读一次；tab 从隐藏变可见时补一次（避免看到过期数据）
+      /**
+       * 什么时候自动取一次数据 —— **只有这两种事件，没有轮询**：
+       *   ① 首次显示（挂载）；
+       *   ② tab 从隐藏变可见（切走再切回来）；
+       *   ③ 窗口重新获得焦点（在编辑器里改完代码切回来）。
+       * 其余时间靠头部那个「刷新」按钮手动取。
+       *
+       * ⚠️ 早先这里写的是 `!loadedRef.current || data === null`：第一次之后就再也不满足了，
+       * 所以「切回来补一次」根本没生效（注释与行为不符）。改成用 wasVisibleRef 认「变可见」这个转变。
+       */
       React.useEffect(() => {
-        if (!visible) return;
-        if (!loadedRef.current || data === null) {
-          loadedRef.current = true;
-          refresh();
+        if (!visible) {
+          wasVisibleRef.current = false;
+          return undefined;
         }
+        const becameVisible = !wasVisibleRef.current;
+        wasVisibleRef.current = true;
+        if (becameVisible || data === null) refresh();
+
+        const onFocus = () => {
+          if (wasVisibleRef.current) refresh();
+        };
+        window.addEventListener('focus', onFocus);
+        return () => window.removeEventListener('focus', onFocus);
       }, [visible, data, refresh]);
 
       if (phase === 'loading') {
@@ -596,6 +617,10 @@ window.__ModuleLoader__.load({
           onClick: () => setOnlyChat(!onlyChat),
           title: '只看本次对话改过的文件',
         }, '只看本次'),
+        loadedAt === 0
+          ? null
+          : React.createElement('span', { key: 'at', className: 'git-diff-chip', title: '这份 diff 的读取时间' },
+              `${new Date(loadedAt).toTimeString().slice(0, 8)} 更新`),
         React.createElement('button', {
           key: 'wrap', type: 'button',
           className: 'git-diff-btn' + (wrap ? ' is-on' : ''),
