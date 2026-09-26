@@ -41,6 +41,8 @@ window.__ModuleLoader__.load({
     const MAX_DIFF_LINES = 3000;
     /** 连续多少行未修改就折起来（点击可展开）。 */
     const COLLAPSE_MIN = 6;
+    /** 轮询间隔：只在「tab 可见 + 窗口聚焦」时按这个间隔重读，默认开，可关。 */
+    const POLL_MS = 3000;
 
     // ────────────────────────────────────────────────────────────── 样式
 
@@ -78,9 +80,9 @@ window.__ModuleLoader__.load({
 .git-diff-root { display: flex; flex-direction: column; flex: auto; height: 100%; min-height: 0; overflow: hidden;
   font-size: var(--dsh-content-font-size-secondary, 13px); color: var(--dsw-alias-label-primary); }
 .git-diff-scroll { flex: 1; min-height: 0; overflow: auto; background: var(--dsw-alias-bg-base); }
-.git-diff-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+.git-diff-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 6px 10px;
   border-bottom: 1px solid var(--dsw-alias-border-l3); flex: none; min-width: 0; }
-.git-diff-repo { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+.git-diff-repo { min-width: 0; flex: 1 1 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--dsw-alias-label-secondary); font-size: 12px; }
 .git-diff-chip { flex: none; padding: 1px 7px; border-radius: 999px; font-size: 11px; line-height: 18px;
   background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-secondary); }
@@ -509,6 +511,10 @@ window.__ModuleLoader__.load({
       const [onlyChat, setOnlyChat] = React.useState(false);
       /** 自动换行：默认开，这样 diff 宽度跟着面板/窗口自适应，不用横向滚。 */
       const [wrap, setWrap] = React.useState(true);
+      /** 3 秒轮询：默认开，仅在 tab 可见且窗口聚焦时跑。 */
+      const [poll, setPoll] = React.useState(true);
+      /** 有请求在路上时就跳过这一拍，避免堆叠（大仓库一次 git diff 可能几百毫秒）。 */
+      const inFlightRef = React.useRef(false);
       const [busy, setBusy] = React.useState(false);
 
       const visible = useTabInfo === undefined ? true : useTabInfo().tab.visible !== false;
@@ -520,8 +526,14 @@ window.__ModuleLoader__.load({
       /** 上一次读到数据的时间（显示在头部，回答「这份 diff 是什么时候的」）。 */
       const [loadedAt, setLoadedAt] = React.useState(0);
 
-      const refresh = React.useCallback(async () => {
-        setBusy(true);
+      /**
+       * @param silent - true 表示后台轮询：不显示「读取中…」，免得每 3 秒闪一次按钮文案。
+       *   ⚠️ 不要写成 `onClick={refresh}` —— React 会把事件对象当第一个参数传进来。
+       */
+      const refresh = React.useCallback(async (silent) => {
+        const quiet = silent === true;
+        if (!quiet) setBusy(true);
+        inFlightRef.current = true;
         try {
           const value = await loaderRef.current();
           setData(value);
@@ -532,7 +544,8 @@ window.__ModuleLoader__.load({
           setPhase('error');
           setError(problem instanceof Error ? problem.message : String(problem));
         } finally {
-          setBusy(false);
+          inFlightRef.current = false;
+          if (!quiet) setBusy(false);
         }
       }, []);
 
@@ -561,6 +574,40 @@ window.__ModuleLoader__.load({
         window.addEventListener('focus', onFocus);
         return () => window.removeEventListener('focus', onFocus);
       }, [visible, data, refresh]);
+
+      /**
+       * 3 秒轮询（可关）。两重闸门，避免白烧 CPU：
+       *   ① 只在 tab 可见时存在；② 窗口失焦就**停掉定时器**（不是空转），回到前台再恢复。
+       * 另外上一拍还没回来就跳过，不堆叠。
+       */
+      React.useEffect(() => {
+        if (!poll || !visible) return undefined;
+        let timer;
+        const tick = () => {
+          if (inFlightRef.current) return;
+          refresh(true);   // 静默：不切「读取中…」
+        };
+        const start = () => {
+          if (timer === undefined) timer = window.setInterval(tick, POLL_MS);
+        };
+        const stop = () => {
+          if (timer !== undefined) {
+            window.clearInterval(timer);
+            timer = undefined;
+          }
+        };
+        const focused = () => typeof document.hasFocus !== 'function' || document.hasFocus();
+        if (focused()) start();
+        const onFocus = () => start();
+        const onBlur = () => stop();
+        window.addEventListener('focus', onFocus);
+        window.addEventListener('blur', onBlur);
+        return () => {
+          stop();
+          window.removeEventListener('focus', onFocus);
+          window.removeEventListener('blur', onBlur);
+        };
+      }, [poll, visible, refresh]);
 
       if (phase === 'loading') {
         return React.createElement('div', { className: 'git-diff-root' },
@@ -606,7 +653,8 @@ window.__ModuleLoader__.load({
       const head = React.createElement('div', { key: 'head', className: 'git-diff-head' }, [
         React.createElement('span', { key: 'repo', className: 'git-diff-repo', title: data.root },
           `${data.branch}${data.upstream === '' ? '' : ' → ' + data.upstream}` +
-            (data.ahead === 0 && data.behind === 0 ? '' : `  ↑${data.ahead} ↓${data.behind}`)),
+            (data.ahead === 0 && data.behind === 0 ? '' : `  ↑${data.ahead} ↓${data.behind}`) +
+            (loadedAt === 0 ? '' : `  ·  ${new Date(loadedAt).toTimeString().slice(0, 8)}`)),
         React.createElement('span', { key: 'n', className: 'git-diff-chip' }, `${allFiles.length} 个改动`),
         data.fromChat > 0
           ? React.createElement('span', { key: 'c', className: 'git-diff-chip is-chat' }, `本次对话 ${data.fromChat}`)
@@ -617,10 +665,14 @@ window.__ModuleLoader__.load({
           onClick: () => setOnlyChat(!onlyChat),
           title: '只看本次对话改过的文件',
         }, '只看本次'),
-        loadedAt === 0
-          ? null
-          : React.createElement('span', { key: 'at', className: 'git-diff-chip', title: '这份 diff 的读取时间' },
-              `${new Date(loadedAt).toTimeString().slice(0, 8)} 更新`),
+        React.createElement('button', {
+          key: 'poll', type: 'button',
+          className: 'git-diff-btn' + (poll ? ' is-on' : ''),
+          onClick: () => setPoll(!poll),
+          title: poll
+            ? '关掉 3 秒轮询（改成手动刷新）'
+            : `打开 3 秒轮询（仅在 tab 可见且窗口聚焦时）`,
+        }, '3s 轮询'),
         React.createElement('button', {
           key: 'wrap', type: 'button',
           className: 'git-diff-btn' + (wrap ? ' is-on' : ''),
@@ -629,7 +681,8 @@ window.__ModuleLoader__.load({
         }, '自动换行'),
         React.createElement('button', {
           key: 'refresh', type: 'button', className: 'git-diff-btn', disabled: busy,
-          onClick: refresh,
+          title: loadedAt === 0 ? '重新读一次' : `重新读一次（上次 ${new Date(loadedAt).toLocaleTimeString()}）`,
+          onClick: () => refresh(),
         }, busy ? '读取中…' : '刷新'),
       ].filter(Boolean));
 
