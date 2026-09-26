@@ -105,7 +105,7 @@ window.__ModuleLoader__.load({
 .git-diff-badge { flex: none; min-width: 18px; height: 15px; padding: 0 3px; border-radius: 3px;
   font-size: 9px; line-height: 15px; text-align: center; font-weight: 600;
   background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-secondary); }
-.git-diff-badge.is-ts { color: var(--dsw-alias-label-primary-bluish); }
+.git-diff-badge.is-ts { color: var(--dsw-alias-label-primary-bluish, var(--dsw-alias-state-business-primary)); }
 .git-diff-badge.is-js { color: var(--dsw-alias-state-warn-label); }
 .git-diff-badge.is-css, .git-diff-badge.is-html { color: var(--dsw-alias-state-business-primary); }
 .git-diff-status { flex: none; width: 12px; text-align: center; font-weight: 600; font-size: 10px;
@@ -127,7 +127,8 @@ window.__ModuleLoader__.load({
 /* 一行 = [行号][符号][代码]；整行按内容撑开，横向也能滚 */
 .git-diff-line { display: flex; white-space: pre; min-width: max-content; font-size: 11.5px; line-height: 18px; }
 .git-diff-line > .git-diff-gutter { flex: none; width: 44px; padding-right: 8px; text-align: right;
-  color: var(--dsw-alias-label-dimmed, var(--dsw-alias-label-tertiary)); user-select: none;
+  /* 行号是要读的：用 secondary。dimmed 是色板里最淡的一档（浅色主题下 #e1e5ee），做正文完全看不清 */
+  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-tertiary)); user-select: none;
   background: color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent); }
 .git-diff-line > .git-diff-sign { flex: none; width: 14px; text-align: center; user-select: none;
   color: var(--dsw-alias-label-tertiary); }
@@ -136,23 +137,24 @@ window.__ModuleLoader__.load({
 .git-diff-line.is-del { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 13%, transparent); }
 .git-diff-line.is-add > .git-diff-gutter { background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 20%, transparent); }
 .git-diff-line.is-del > .git-diff-gutter { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 20%, transparent); }
-.git-diff-line.is-hunk > .git-diff-text { color: var(--dsw-alias-label-tertiary); }
-.git-diff-line.is-meta { color: var(--dsw-alias-label-tertiary); }
+.git-diff-line.is-hunk > .git-diff-text { color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-tertiary)); }
+.git-diff-line.is-meta { color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary)); }
 .git-diff-line.is-meta > .git-diff-text { padding-left: 6px; }
 
 /* 语法高亮：只用主题语义变量（随明暗主题自动切换） */
 .git-diff-tok.is-keyword { color: var(--dsw-alias-state-error-primary); }
-.git-diff-tok.is-type { color: var(--dsw-alias-label-primary-bluish); }
+.git-diff-tok.is-type { color: var(--dsw-alias-label-primary-bluish, var(--dsw-alias-state-business-primary)); }
 .git-diff-tok.is-string { color: var(--dsw-alias-state-success-primary); }
-.git-diff-tok.is-number { color: var(--dsw-alias-state-warn-label); }
-.git-diff-tok.is-comment { color: var(--dsw-alias-label-dimmed, var(--dsw-alias-label-tertiary)); font-style: italic; }
-.git-diff-tok.is-key { color: var(--dsw-alias-label-primary-bluish); }
+.git-diff-tok.is-number { color: var(--dsw-alias-state-warn-label, var(--dsw-alias-state-business-primary)); }
+.git-diff-tok.is-comment { color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-tertiary)); }
+.git-diff-tok.is-key { color: var(--dsw-alias-label-primary-bluish, var(--dsw-alias-state-business-primary)); }
 .git-diff-tok.is-func { color: var(--dsw-alias-state-business-primary); }
 .git-diff-tok.is-tag { color: var(--dsw-alias-state-error-primary); }
 
 /* 「N 行未修改」折叠条 */
 .git-diff-fold { display: flex; align-items: center; gap: 8px; padding: 3px 8px 3px 4px;
-  color: var(--dsw-alias-label-tertiary); font-size: 11.5px; cursor: pointer; user-select: none;
+  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-tertiary)); font-size: 11.5px;
+  cursor: pointer; user-select: none;
   background: var(--dsw-alias-bg-layer-1); }
 .git-diff-fold:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); }
 .git-diff-fold-icon { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 16px;
