@@ -18,11 +18,29 @@
  *
  * ⚠️ 和 annotate 插件同一条硬约束：**不能 import `@deepseek-ai/*`**（link: 安装时解析不到），
  * 所以工具定义按 `defineTool()` 编译后的原始 JSON Schema 形状手写，一切从 ctx 上取。
+ *
+ * 另外还给客户端的 **Git Diff 右侧 tab** 提供两条**只读** HTTP 路由（Web 版没有插件宿主进程
+ * 时 tab 拿不到数据，所以走 HTTP 而不是工具）：
+ *   POST /api/git-ship/status → 分支 / upstream / 未提交文件（含「本次对话改过」标记）
+ *   POST /api/git-ship/diff   → 单个文件的统一 diff（工作区 + 已暂存两段）
+ * 依旧：只回环、必须带 `x-dsh-git-ship: 1` 标记头、只跑只读 git 命令。
  */
 
 import { execFile } from 'node:child_process';
-import { isAbsolute, resolve } from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
+import { isAbsolute, resolve, sep } from 'node:path';
 
+/** 路由前缀（Git Diff tab 用）。 */
+const ROUTE_PREFIX = '/api/git-ship';
+/** 自定义标记头：这条路由不走 web 的登录 cookie。 */
+const HEADER = 'x-dsh-git-ship';
+/** 请求体上限。 */
+const MAX_BODY_BYTES = 64 * 1024;
+/** 单个文件 diff 的字符上限（超了截断并标注）。 */
+const MAX_DIFF_CHARS = 200_000;
+/** 未跟踪文件合成 diff 时，最多读这么多字节 / 这么多行。 */
+const MAX_UNTRACKED_BYTES = 512 * 1024;
+const MAX_UNTRACKED_LINES = 4000;
 /** 只读 git 命令的超时。 */
 const GIT_TIMEOUT_MS = 30_000;
 /** 工具返回里最多列多少个文件。 */
@@ -55,6 +73,50 @@ const git = (args, cwd) =>
   });
 
 const firstLine = (text) => text.split('\n').find((line) => line.trim() !== '') ?? '';
+
+/** 只接受本机回环请求。 */
+const isLoopback = (req) => {
+  const socket = req.socket;
+  const address = socket === undefined || socket === null ? '' : socket.remoteAddress ?? '';
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1' || address === '';
+};
+
+const sendJson = (res, status, payload) => {
+  const body = Buffer.from(JSON.stringify(payload), 'utf8');
+  res.writeHead(status, {
+    'cache-control': 'no-store',
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': String(body.length),
+    'x-content-type-options': 'nosniff',
+  });
+  res.end(body);
+};
+
+const fail = (res, status, code, message) => sendJson(res, status, { ok: false, error: { code, message } });
+
+const readJsonBody = (req) =>
+  new Promise((resolve_, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        reject(new Error(`请求体超过 ${MAX_BODY_BYTES} 字节`));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => {
+      try {
+        const text = Buffer.concat(chunks).toString('utf8');
+        resolve_(text === '' ? {} : JSON.parse(text));
+      } catch (error) {
+        reject(new Error('请求体不是合法 JSON'));
+      }
+    });
+    req.on('error', reject);
+  });
 
 /**
  * 解析 `git status --porcelain=v1 -z`。
@@ -92,8 +154,8 @@ const statusLabel = (status) => {
 /** cordis 插件名。 */
 export const name = 'git-ship';
 
-/** systemPrompt 写说明，tools 挂只读工具，sessions 把 sessionId 解析成工作目录。 */
-export const inject = ['systemPrompt', 'tools', 'sessions'];
+/** systemPrompt 写说明，tools 挂只读工具，sessions 解析工作目录，webServer 挂 tab 用的只读路由。 */
+export const inject = ['systemPrompt', 'tools', 'sessions', 'webServer'];
 
 
 /**
@@ -358,5 +420,188 @@ export function apply(ctx) {
     'git-ship: git_ship_changes tool',
   );
 
-  console.log('[dsh-git-ship] host half ready: system prompt section + git_ship_changes（只读，不做 git 写操作）');
+  /**
+   * 读一个文件的 diff。
+   *
+   * 安全要点：`path` **必须**是这次 `git status` 里真实存在的条目，绝不把客户端给的字符串
+   * 直接塞进 git 参数（否则 `--no-index /etc/passwd` 之类就能把任意文件读出来）。
+   * 未跟踪文件 `git diff` 是空的，这里自己合成一段「全新增」的 diff。
+   */
+  const readDiff = async (repo, wantedPath) => {
+    const entry = repo.files.find((file) => file.path === wantedPath);
+    if (entry === undefined) {
+      return { error: { code: 'not-dirty', message: `这个文件不在未提交列表里：${wantedPath}` } };
+    }
+    const cut = (text) =>
+      text.length > MAX_DIFF_CHARS
+        ? { text: text.slice(0, MAX_DIFF_CHARS), truncated: true }
+        : { text, truncated: false };
+    const base = { path: entry.path, status: entry.status, label: statusLabel(entry.status) };
+
+    // 未跟踪：合成一段「全新增」的 diff
+    if (entry.status.indexOf('?') >= 0) {
+      const absolute = resolve(repo.root, entry.path);
+      // 双保险：不能跑出仓库（status 里的路径理论上都在里面，但不赌）
+      if (absolute !== repo.root && !absolute.startsWith(repo.root + sep)) {
+        return { error: { code: 'outside', message: '这个路径不在仓库里' } };
+      }
+      let buffer;
+      try {
+        const stats = await stat(absolute);
+        if (stats.size > MAX_UNTRACKED_BYTES) {
+          return {
+            ...base,
+            worktree: '',
+            index: '',
+            binary: false,
+            truncated: true,
+            note: `文件 ${stats.size} 字节，超过 ${MAX_UNTRACKED_BYTES} 字节，不在这里展开`,
+          };
+        }
+        buffer = await readFile(absolute);
+      } catch (error) {
+        return { error: { code: 'unreadable', message: `读不了这个文件：${String(error && error.message ? error.message : error)}` } };
+      }
+      if (buffer.subarray(0, 8192).includes(0)) {
+        return { ...base, worktree: '', index: '', binary: true, truncated: false };
+      }
+      const lines = buffer.toString('utf8').split('\n');
+      const capped = lines.slice(0, MAX_UNTRACKED_LINES);
+      const body = capped.map((line) => `+${line}`).join('\n');
+      const hacked = {
+        text: [
+          `diff --git a/${entry.path} b/${entry.path}`,
+          'new file mode 100644',
+          '--- /dev/null',
+          `+++ b/${entry.path}`,
+          `@@ -0,0 +1,${capped.length} @@`,
+          body,
+        ].join('\n'),
+        truncated: lines.length > capped.length,
+      };
+      return { ...base, worktree: hacked.text, index: '', binary: false, truncated: hacked.truncated, untracked: true };
+    }
+
+    const paths = entry.original === undefined ? [entry.path] : [entry.original, entry.path];
+    const useRename = entry.original === undefined ? [] : ['-M'];
+    const worktree = await git(['diff', '--no-color', ...useRename, '--', ...paths], repo.root);
+    const index = await git(['diff', '--cached', '--no-color', ...useRename, '--', ...paths], repo.root);
+    if (!worktree.ok && !index.ok) {
+      return { error: { code: 'diff-failed', message: firstLine(worktree.stderr || index.stderr) || worktree.message } };
+    }
+    const worktreeCut = cut(worktree.stdout);
+    const indexCut = cut(index.stdout);
+    return {
+      ...base,
+      worktree: worktreeCut.text,
+      index: indexCut.text,
+      binary: /Binary files|GIT binary patch/.test(worktree.stdout + index.stdout),
+      truncated: worktreeCut.truncated || indexCut.truncated,
+      ...(entry.original === undefined ? {} : { original: entry.original }),
+    };
+  };
+
+  ctx.effect(
+    () =>
+      ctx.webServer.register({
+        kind: 'prefix',
+        path: ROUTE_PREFIX,
+        handler: (req, res) =>
+          (async () => {
+            if (!isLoopback(req)) {
+              fail(res, 403, 'forbidden', '只接受本机回环请求');
+              return;
+            }
+            // 这条路由不走 web 的登录 cookie，所以要自定义头：跨站请求带自定义头必须过 CORS 预检，
+            // 而我们从不给 CORS 头 → 网页发不进来。
+            if (req.headers === undefined || req.headers[HEADER] !== '1') {
+              fail(res, 403, 'forbidden', `缺少 ${HEADER} 标记头`);
+              return;
+            }
+            const url = new URL(req.url ?? '/', 'http://x');
+            const path = url.pathname;
+            if (req.method !== 'POST') {
+              fail(res, 405, 'method', `只支持 POST（收到 ${req.method} ${path}）`);
+              return;
+            }
+            if (path !== `${ROUTE_PREFIX}/status` && path !== `${ROUTE_PREFIX}/diff`) {
+              fail(res, 404, 'not-found', `未知路由 ${req.method} ${path}（只有只读的 /status 与 /diff）`);
+              return;
+            }
+            let body;
+            try {
+              body = await readJsonBody(req);
+            } catch (error) {
+              fail(res, 400, 'bad-request', String(error && error.message ? error.message : error));
+              return;
+            }
+            const sessionId = typeof body.sessionId === 'string' ? body.sessionId : '';
+            if (sessionId === '') {
+              fail(res, 400, 'bad-request', '缺 sessionId');
+              return;
+            }
+            const repo = await readRepo(sessionId);
+            if (repo.error !== undefined) {
+              fail(res, 409, repo.error.code, repo.error.message);
+              return;
+            }
+            if (path === `${ROUTE_PREFIX}/status`) {
+              const chat = chatFilesOf(sessionId, repo.cwd);
+              const files = repo.files.slice(0, MAX_FILES).map((file) => {
+                const chatInfo = chat.merged.get(resolve(repo.root, file.path));
+                return {
+                  path: file.path,
+                  status: file.status,
+                  label: statusLabel(file.status),
+                  ...(file.original === undefined ? {} : { original: file.original }),
+                  fromChat: chatInfo !== undefined,
+                  ...(chatInfo === undefined || chatInfo.added === undefined ? {} : { added: chatInfo.added }),
+                  ...(chatInfo === undefined || chatInfo.deleted === undefined ? {} : { deleted: chatInfo.deleted }),
+                };
+              });
+              sendJson(res, 200, {
+                ok: true,
+                value: {
+                  cwd: repo.cwd,
+                  root: repo.root,
+                  branch: repo.branch,
+                  detached: repo.detached,
+                  upstream: repo.upstream,
+                  ahead: repo.ahead,
+                  behind: repo.behind,
+                  files,
+                  total: repo.files.length,
+                  truncated: repo.files.length > files.length,
+                  chatKnown: chat.known,
+                  chatReason: chat.reason,
+                  fromChat: files.filter((file) => file.fromChat).length,
+                },
+              });
+              return;
+            }
+            const wanted = typeof body.path === 'string' ? body.path : '';
+            if (wanted === '') {
+              fail(res, 400, 'bad-request', '缺 path');
+              return;
+            }
+            const diff = await readDiff(repo, wanted);
+            if (diff.error !== undefined) {
+              fail(res, 409, diff.error.code, diff.error.message);
+              return;
+            }
+            sendJson(res, 200, { ok: true, value: diff });
+          })().catch((error) => {
+            try {
+              fail(res, 500, 'internal', String(error && error.message ? error.message : error));
+            } catch (writeError) {
+              console.error('[dsh-git-ship] 路由回包失败', writeError);
+            }
+          }),
+      }),
+    'git-ship: read-only routes',
+  );
+
+  console.log(
+    `[dsh-git-ship] host half ready: prompt + git_ship_changes + ${ROUTE_PREFIX}/{status,diff}（全部只读，不做 git 写操作）`,
+  );
 }
