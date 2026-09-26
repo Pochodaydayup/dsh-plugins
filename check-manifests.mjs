@@ -15,6 +15,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(process.argv[2] === undefined || process.argv[2].startsWith('--')
@@ -63,6 +64,20 @@ const checks = (plugin) => {
     const client = manifest.exports?.['./client'];
     if (exists(client)) {
       const source = fs.readFileSync(path.join(root, dir, client), 'utf8');
+      // 语法能编译（模板字符串被截断这类错误，光看 --check 有时会漏）
+      try {
+        new vm.Script(source, { filename: client });
+        add(true, 'client bundle 语法可编译');
+      } catch (error) {
+        add(false, 'client bundle 语法可编译', String(error.message));
+      }
+      // ⚠️ 踩过两次：CSS 注释里写反引号会**提前结束模板字符串**
+      //（一次变成运行时 ReferenceError，一次直接语法错）—— 这里直接禁掉。
+      const cssBlock = /const CSS = `([\s\S]*?)`;/.exec(source);
+      if (cssBlock !== null) {
+        const offenders = cssBlock[1].split('\n').map((line, index) => ({ line, index })).filter((row) => row.line.includes('`'));
+        add(offenders.length === 0, 'CSS 模板里没有反引号', offenders.map((row) => `第 ${row.index + 1} 行`).join(', '));
+      }
       // client bundle 的 id 必须等于包名，否则 Loader 认不出这一份
       const id = source.match(/__ModuleLoader__\.load\(\{[\s\S]{0,120}?id:\s*['"]([^'"]+)['"]/);
       add(id !== null && id[1] === manifest.name, 'client bundle 的 id 等于包名', id === null ? '没找到 __ModuleLoader__.load({ id })' : id[1]);

@@ -60,7 +60,12 @@ window.__ModuleLoader__.load({
   max-width: calc(var(--dsh-composer-card-max-width, 100%) + var(--dsh-composer-side-clearance, 16px)
     + var(--dsh-composer-side-clearance, 16px));
   padding: 0 var(--dsh-composer-side-clearance, 16px);
-  margin: 0 auto; display: flex; flex-direction: column; gap: 6px; font-size: 12px;
+  /* 上边距：和上面那个模块（比如排队消息的 queue dock）之间留出空隙。
+     官方 queue dock 自带 margin-bottom: calc(0px - stack-gap - 3px) —— 它把自己的
+     下边界往下压了 9px，正好吃掉 stack 的 6px 间隙，所以两者会贴在一起/轻微重叠。
+     这里补回「stack-gap + 4px」，比原来的间隙再宽一点。 */
+  margin: calc(var(--dsh-composer-stack-gap, 6px) + 4px) auto 0;
+  display: flex; flex-direction: column; gap: 6px; font-size: 12px;
   color: var(--dsw-alias-label-primary); }
 .git-ship-bar { display: flex; align-items: center; gap: 8px; }
 /* 不透明底：它是带文字的按钮，透明底在输入框上方会跟背景糊在一起。
