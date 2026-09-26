@@ -344,17 +344,49 @@ export function apply(ctx) {
     'git-ship: session tracking',
   );
 
-  /** sessionId → 工作目录：先看事件里记的，再问 sessions 服务。 */
-  const cwdOf = (sessionId) => {
+  /**
+   * sessionId → 工作目录。
+   *
+   * 四层兜底，顺序照官方 `dsh-api-workspace-files` 的 `workspaceFileScope.resolve`：
+   *   ① 会话事件里记下的（本轮见过活动的会话）
+   *   ② `ctx.sessions.get(id)` —— 这个宿主进程里**活着**的会话
+   *   ③ `ctx.get('sessionPersistence').stat(id).header.cwd` —— 落盘但**还没被加载**的会话
+   *      （重启后立刻打开 tab 就是这种情况：Session 在磁盘上，本体还没进宿主进程）
+   *   ④ `ctx.sandboxPolicy.workspaceRoot` —— 进程级默认工作区（官方也拿它兜底）
+   * 路径只从这些地方来，**不接受客户端传**。
+   */
+  const cwdOf = async (sessionId) => {
     const known = cwdBySession.get(sessionId);
     if (known !== undefined) return known;
+
+    let live;
     try {
-      const session = ctx.sessions.get(sessionId);
-      rememberCwd(session);
-      const cwd = session === undefined || session.header === undefined ? undefined : session.header.cwd;
-      if (typeof cwd === 'string' && cwd !== '') return cwd;
+      live = ctx.sessions.get(sessionId);
     } catch (error) {
-      /* 会话不在这个宿主进程里 → 交给调用方报错 */
+      live = undefined;
+    }
+    if (live !== undefined) {
+      rememberCwd(live);
+      const cwd = live.header === undefined ? undefined : live.header.cwd;
+      if (typeof cwd === 'string' && cwd !== '') return cwd;
+    }
+
+    try {
+      const persistence = ctx.get('sessionPersistence');
+      const stored = persistence === undefined ? undefined : await persistence.stat(sessionId);
+      const cwd = stored === undefined || stored.header === undefined ? undefined : stored.header.cwd;
+      if (typeof cwd === 'string' && cwd !== '') {
+        cwdBySession.set(sessionId, cwd);
+        return cwd;
+      }
+    } catch (error) {
+      /* 没有持久化服务 / 读失败 → 继续兜底 */
+    }
+
+    const fallback = ctx.sandboxPolicy === undefined ? undefined : ctx.sandboxPolicy.workspaceRoot;
+    if (typeof fallback === 'string' && fallback !== '') {
+      console.log(`[dsh-git-ship] 会话 ${sessionId} 没有工作目录，退回进程默认工作区 ${fallback}`);
+      return fallback;
     }
     return undefined;
   };
@@ -396,9 +428,16 @@ export function apply(ctx) {
 
   /** 读一次仓库状态（纯只读命令）。 */
   const readRepo = async (sessionId) => {
-    const cwd = cwdOf(sessionId);
+    const cwd = await cwdOf(sessionId);
     if (cwd === undefined) {
-      return { error: { code: 'no-session', message: '拿不到这个会话的工作目录（会话可能已结束，或宿主是旧进程）' } };
+      return {
+        error: {
+          code: 'no-session',
+          message:
+            '拿不到这个会话的工作目录：宿主进程里没有活着的会话、持久化层里也没查到、' +
+            '进程默认工作区也没有。请先在会话里说一句话（让宿主把会话加载起来）再试。',
+        },
+      };
     }
     const rootResult = await git(['rev-parse', '--show-toplevel'], cwd);
     if (!rootResult.ok) {
