@@ -61,13 +61,16 @@ window.__ModuleLoader__.load({
   margin: 0 auto; display: flex; flex-direction: column; gap: 6px; font-size: 12px;
   color: var(--dsw-alias-label-primary); }
 .git-ship-bar { display: flex; align-items: center; gap: 8px; }
+/* 不透明底：它是带文字的按钮，透明底在输入框上方会跟背景糊在一起。
+   用「抬升表面」变量（bg-layer-1 → hover bg-layer-2），跟随主题且完全不透明。 */
 .git-ship-btn { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px;
   border: 1px solid var(--dsw-alias-border-l3); border-radius: var(--dsw-radius-sm);
-  background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px;
+  background: var(--dsw-alias-bg-layer-1, var(--dsw-alias-bg-base));
+  color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px;
   cursor: pointer; white-space: nowrap; }
-.git-ship-btn:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover);
+.git-ship-btn:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-2, var(--dsw-alias-bg-layer-1));
   color: var(--dsw-alias-label-primary); }
-.git-ship-btn:disabled { color: var(--dsw-alias-label-tertiary); cursor: default; }
+.git-ship-btn:disabled { color: var(--dsw-alias-label-tertiary); cursor: default; opacity: .7; }
 
 /* ── Git Diff tab ───────────────────────────────────────────────────── */
 /* 字号**跟着 App 的字号设置走**（--dsh-content-font-size 由主题服务按用户设置写入，默认 14px），
