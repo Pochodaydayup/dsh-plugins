@@ -39,33 +39,29 @@
 
 在右侧边栏点 **`+` → Git Diff** 打开（每个会话一个实例，切换 tab / 会话不卸载，折叠状态保留）。
 
-**默认把所有文件的 diff 全部展开**（像 `git diff` 的输出），每段段头（sticky）可以单独折叠。
-整块只有**一个滚动容器**：header 固定，下面是 `.git-diff-scroll`（`flex:1 + min-height:0 + overflow:auto`）。
-> 早先每段 body 各自 `flex:1 + overflow:auto`，段与段互相挤压、外层又没人滚 → 面板滚不动；
-> 现在改成单一容器，长行用 `min-width: max-content` 撑开，横向也能滚。
+**默认把所有文件的 diff 全部展开**，每段段头（sticky）可以单独折叠；样式照着 Sourcegraph 那种 diff 做：
 
 ```
-┌───────────────────────────────────────────────────────────┐
-│ feat/diff → origin/feat/diff ↑2 ↓0  [6 个改动] [本次对话 2] [只看本次] [刷新] │
-├───────────────────────────────────────────────────────────┤
-│ ▼ M a.txt  [工作区] +5/-1          ← 每段可单独折叠（sticky）│
-│    diff --git a/a.txt b/a.txt                              │
-│    @@ -1 +1,3 @@                                           │
-│   -a                                                       │
-│   +a changed                                               │
-│ ▼ U new.txt  [工作区] +3/-0                                │
-│    diff --git a/new.txt b/new.txt   ← 未跟踪：宿主合成       │
-│    @@ -0,0 +1,3 @@                                         │
-│   +new                                                     │
-│ …（其余文件依次展开）                                        │
-└───────────────────────────────────────────────────────────┘
+▼ [TS] apps/web/src/api/index.ts   +44 -7   ● 工作区
+     ⌄⌃ 177 行未修改                     ← 连续 ≥6 行未修改自动折起来，点一下就地展开
+ 178   user_api_range?: number;           ← 行号槽（删除行显示旧行号，其余显示新行号）
+ 181 + ai_duel?: Record<string, unknown>; ← 关键字/字符串/数字/键都有语法高亮
+ 208 - rank_type: params.rank_type;
 ```
+
+- **行号**：单列，语义是「删除行显示旧行号，其余显示新行号」（和 Sourcegraph 一致）。
+- **语法高亮**：逐行、无跨行状态的极简高亮（注释 / 字符串 / 数字 / 关键字 / 类型 / 对象键 / 函数名 / 标签）。
+  没有依赖，也不做真正的词法分析 —— 多行字符串或块注释只会高亮到行尾。
+  配色**只用主题语义变量**（`--dsw-alias-*`），所以明暗主题自动跟随，不用维护两套色板。
+- **折叠未修改行**：一段连续 ≥6 行未修改就折成「N 行未修改」，点击就地展开（不用重新取数）。
+- **文件头**：类型徽章（TS / JS / {} / <> / # / M↓）+ 路径 + `+a -b` 着色，浅底 sticky，不是厚重的灰条。
+- 长行不换行，靠 `.git-diff-line { min-width: max-content }` 撑开，横向滚。
 
 数据来自宿主半边**一条只读路由**（和 annotate 同一套安全约定：只回环 + 必须带 `x-dsh-git-ship: 1`）：
 
 | 路由 | 返回 |
 |---|---|
-| `POST /api/git-ship/diffs` | 分支 / upstream / ahead-behind + 每个未提交文件的 `worktree` 与 `index` 两段 diff |
+| `POST /api/git-ship/diffs` | 分支 / upstream / ahead-behind + 每个未提交文件的 `worktree` 与 `index` 两段 diff（`git diff -U10`，上下文 10 行，足够折出/展开「N 行未修改」） |
 
 一次给全是**故意的**：tab 默认全展开，逐文件请求要 N 次；而全量 diff 只要 2 次 git 调用
 （`git diff` + `git diff --cached`，按行首的 `diff --git` 切段后分给各文件），更省。

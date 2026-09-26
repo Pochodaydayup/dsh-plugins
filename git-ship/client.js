@@ -39,6 +39,8 @@ window.__ModuleLoader__.load({
     const DIFF_TAB_KIND = 'git-diff';
     /** 一次渲染最多画多少行 diff（再长就截断，避免点一个大文件卡住界面）。 */
     const MAX_DIFF_LINES = 3000;
+    /** 连续多少行未修改就折起来（点击可展开）。 */
+    const COLLAPSE_MIN = 6;
 
     // ────────────────────────────────────────────────────────────── 样式
 
@@ -68,12 +70,10 @@ window.__ModuleLoader__.load({
 .git-ship-btn:disabled { color: var(--dsw-alias-label-tertiary); cursor: default; }
 
 /* ── Git Diff tab ───────────────────────────────────────────────────── */
-/* 面板填满右侧栏，但**只有 .git-diff-scroll 一个滚动容器** ——
-   之前每段 body 都是 flex:1 + overflow:auto，结果互相挤压、外层又没人滚，就滚不动了。 */
 .git-diff-root { display: flex; flex-direction: column; flex: auto; height: 100%; min-height: 0; overflow: hidden;
   font-size: 12px; color: var(--dsw-alias-label-primary); }
-.git-diff-scroll { flex: 1; min-height: 0; overflow: auto; }
-.git-diff-head { display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+.git-diff-scroll { flex: 1; min-height: 0; overflow: auto; background: var(--dsw-alias-bg-base); }
+.git-diff-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
   border-bottom: 1px solid var(--dsw-alias-border-l3); flex: none; min-width: 0; }
 .git-diff-repo { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   color: var(--dsw-alias-label-secondary); font-size: 11px; }
@@ -86,39 +86,77 @@ window.__ModuleLoader__.load({
 .git-diff-btn:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
 .git-diff-btn:disabled { color: var(--dsw-alias-label-tertiary); cursor: default; }
 .git-diff-btn.is-on { color: var(--dsw-alias-state-business-primary); border-color: currentColor; }
-.git-diff-status { flex: none; width: 18px; text-align: center; font-weight: 600; font-size: 11px;
-  color: var(--dsw-alias-label-tertiary); }
-.git-diff-status.is-add { color: var(--dsw-alias-state-success-primary, var(--dsw-alias-state-business-primary)); }
-.git-diff-status.is-del { color: var(--dsw-alias-state-error-primary); }
-.git-diff-status.is-mod { color: var(--dsw-alias-state-warning-primary, var(--dsw-alias-label-primary)); }
-.git-diff-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  direction: rtl; text-align: left; font-family: var(--dsw-font-family-mono, ui-monospace, monospace); }
-.git-diff-counts { flex: none; font-size: 10px; color: var(--dsw-alias-label-tertiary); }
-.git-diff-dot { flex: none; width: 6px; height: 6px; border-radius: 999px;
-  background: var(--dsw-alias-state-business-primary); }
-.git-diff-body { font-family: var(--dsw-font-family-mono, ui-monospace, monospace); }
-.git-diff-line { display: flex; white-space: pre; min-width: max-content; font-size: 11px; line-height: 17px; }
-.git-diff-line > .git-diff-sign { flex: none; width: 18px; text-align: center; opacity: .6; user-select: none; }
-.git-diff-line > .git-diff-text { flex: 1; min-width: 0; padding-right: 10px; }
-.git-diff-line.is-add { background: color-mix(in srgb, var(--dsw-alias-state-success-primary, #2ea043) 14%, transparent); }
-.git-diff-line.is-del { background: color-mix(in srgb, var(--dsw-alias-state-error-primary, #f85149) 14%, transparent); }
-.git-diff-line.is-hunk { color: var(--dsw-alias-state-business-primary); }
-.git-diff-line.is-meta { color: var(--dsw-alias-label-tertiary); }
 .git-diff-modes { display: flex; gap: 6px; padding: 6px 10px; flex: none;
   border-bottom: 1px solid var(--dsw-alias-border-l3); }
-.git-diff-note { padding: 10px; color: var(--dsw-alias-label-tertiary); line-height: 18px; }
+.git-diff-note { padding: 8px 10px; color: var(--dsw-alias-label-tertiary); line-height: 18px; }
 .git-diff-note.is-error { color: var(--dsw-alias-state-error-primary); }
 .git-diff-empty { padding: 16px 12px; color: var(--dsw-alias-label-tertiary); text-align: center; line-height: 20px; }
-.git-diff-section { border-bottom: 1px solid var(--dsw-alias-border-l3); }
-.git-diff-section-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 10px;
-  border: none; background: var(--dsw-alias-bg-layer-3); color: inherit; font: inherit; font-size: 12px;
-  cursor: pointer; text-align: left; min-width: 0; position: sticky; top: 0; z-index: 1; }
-.git-diff-section-head:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.git-diff-chevron { flex: none; width: 10px; color: var(--dsw-alias-label-tertiary); font-size: 9px; }
-.git-diff-side { flex: none; font-size: 10px; padding: 0 5px; border-radius: 999px;
-  background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-tertiary); }
 .git-diff-title { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
 .git-diff-title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 文件段：浅色头（不是厚重的灰条），sticky 在滚动容器顶部 */
+.git-diff-section { border-bottom: 1px solid var(--dsw-alias-border-l3); }
+.git-diff-section-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 5px 8px;
+  border: none; background: var(--dsw-alias-bg-layer-1); color: inherit; font: inherit; font-size: 12px;
+  cursor: pointer; text-align: left; min-width: 0; position: sticky; top: 0; z-index: 2;
+  border-bottom: 1px solid var(--dsw-alias-border-l3); }
+.git-diff-section-head:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.git-diff-chevron { flex: none; width: 9px; color: var(--dsw-alias-label-tertiary); font-size: 9px; }
+.git-diff-badge { flex: none; min-width: 18px; height: 15px; padding: 0 3px; border-radius: 3px;
+  font-size: 9px; line-height: 15px; text-align: center; font-weight: 600;
+  background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-secondary); }
+.git-diff-badge.is-ts { color: var(--dsw-alias-label-primary-bluish); }
+.git-diff-badge.is-js { color: var(--dsw-alias-state-warn-label); }
+.git-diff-badge.is-css, .git-diff-badge.is-html { color: var(--dsw-alias-state-business-primary); }
+.git-diff-status { flex: none; width: 12px; text-align: center; font-weight: 600; font-size: 10px;
+  color: var(--dsw-alias-label-tertiary); }
+.git-diff-status.is-add { color: var(--dsw-alias-state-success-primary); }
+.git-diff-status.is-del { color: var(--dsw-alias-state-error-primary); }
+.git-diff-status.is-mod { color: var(--dsw-alias-state-warn-label); }
+.git-diff-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  text-align: left; font-family: var(--dsw-font-family-mono, ui-monospace, monospace); font-size: 11.5px; }
+.git-diff-counts { flex: none; font-size: 10.5px; font-family: var(--dsw-font-family-mono, ui-monospace, monospace); }
+.git-diff-counts .add { color: var(--dsw-alias-state-success-primary); }
+.git-diff-counts .del { color: var(--dsw-alias-state-error-primary); }
+.git-diff-dot { flex: none; width: 6px; height: 6px; border-radius: 999px;
+  background: var(--dsw-alias-state-business-primary); }
+.git-diff-side { flex: none; font-size: 10px; padding: 0 5px; border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-tertiary); }
+
+.git-diff-body { font-family: var(--dsw-font-family-mono, ui-monospace, monospace); }
+/* 一行 = [行号][符号][代码]；整行按内容撑开，横向也能滚 */
+.git-diff-line { display: flex; white-space: pre; min-width: max-content; font-size: 11.5px; line-height: 18px; }
+.git-diff-line > .git-diff-gutter { flex: none; width: 44px; padding-right: 8px; text-align: right;
+  color: var(--dsw-alias-label-dimmed, var(--dsw-alias-label-tertiary)); user-select: none;
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent); }
+.git-diff-line > .git-diff-sign { flex: none; width: 14px; text-align: center; user-select: none;
+  color: var(--dsw-alias-label-tertiary); }
+.git-diff-line > .git-diff-text { flex: none; padding-right: 12px; }
+.git-diff-line.is-add { background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 13%, transparent); }
+.git-diff-line.is-del { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 13%, transparent); }
+.git-diff-line.is-add > .git-diff-gutter { background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 20%, transparent); }
+.git-diff-line.is-del > .git-diff-gutter { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 20%, transparent); }
+.git-diff-line.is-hunk > .git-diff-text { color: var(--dsw-alias-label-tertiary); }
+.git-diff-line.is-meta { color: var(--dsw-alias-label-tertiary); }
+.git-diff-line.is-meta > .git-diff-text { padding-left: 6px; }
+
+/* 语法高亮：只用主题语义变量（随明暗主题自动切换） */
+.git-diff-tok.is-keyword { color: var(--dsw-alias-state-error-primary); }
+.git-diff-tok.is-type { color: var(--dsw-alias-label-primary-bluish); }
+.git-diff-tok.is-string { color: var(--dsw-alias-state-success-primary); }
+.git-diff-tok.is-number { color: var(--dsw-alias-state-warn-label); }
+.git-diff-tok.is-comment { color: var(--dsw-alias-label-dimmed, var(--dsw-alias-label-tertiary)); font-style: italic; }
+.git-diff-tok.is-key { color: var(--dsw-alias-label-primary-bluish); }
+.git-diff-tok.is-func { color: var(--dsw-alias-state-business-primary); }
+.git-diff-tok.is-tag { color: var(--dsw-alias-state-error-primary); }
+
+/* 「N 行未修改」折叠条 */
+.git-diff-fold { display: flex; align-items: center; gap: 8px; padding: 3px 8px 3px 4px;
+  color: var(--dsw-alias-label-tertiary); font-size: 11.5px; cursor: pointer; user-select: none;
+  background: var(--dsw-alias-bg-layer-1); }
+.git-diff-fold:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); }
+.git-diff-fold-icon { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 16px;
+  border: 1px solid var(--dsw-alias-border-l3); border-radius: 3px; font-size: 8px; line-height: 1; }
 `;
 
     const ensureCss = () => {
@@ -222,30 +260,217 @@ window.__ModuleLoader__.load({
     };
 
     /**
-     * 把一段统一 diff 拆成行（带类型），供渲染用。
-     * @returns {{ lines: {type: string, text: string}[], hidden: number }}
+     * 语法高亮的配色**只用主题语义变量**（`--dsw-alias-*`）—— 它们本身随明暗主题切换，
+     * 所以不用自己维护两套色板，暗色下也不会瞎。
+     */
+    const TOKEN_CLASS = {
+      keyword: 'is-keyword',
+      type: 'is-type',
+      string: 'is-string',
+      number: 'is-number',
+      comment: 'is-comment',
+      key: 'is-key',
+      func: 'is-func',
+      tag: 'is-tag',
+    };
+
+    const KEYWORDS = new Set(
+      ('const let var function return if else for while do switch case break continue new class extends super this ' +
+        'typeof instanceof in of export import from default async await yield try catch finally throw delete void ' +
+        'static get set type interface enum implements namespace declare readonly public private protected abstract ' +
+        'as is keyof infer satisfies def elif lambda pass raise with global nonlocal assert del not and or end then ' +
+        'func package struct map chan go defer select impl fn pub use mod match where loop mut ref').split(' '),
+    );
+    const TYPE_WORDS = new Set(
+      ('string number boolean any unknown never void object symbol bigint null undefined true false NaN Infinity ' +
+        'Record Promise Array Map Set Date Error JSON Math Object String Number Boolean Symbol Function').split(' '),
+    );
+
+    /** 扩展名 → 语言（决定用哪几条高亮规则）。 */
+    const languageOf = (path) => {
+      const name = String(path).toLowerCase();
+      const dot = name.lastIndexOf('.');
+      const ext = dot < 0 ? '' : name.slice(dot + 1);
+      if (['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'mts', 'cts'].indexOf(ext) >= 0) return 'js';
+      if (['json', 'jsonc'].indexOf(ext) >= 0) return 'json';
+      if (['css', 'wxss', 'scss', 'less', 'styl'].indexOf(ext) >= 0) return 'css';
+      if (['html', 'htm', 'wxml', 'xml', 'vue', 'svelte', 'svg'].indexOf(ext) >= 0) return 'html';
+      if (['md', 'mdx'].indexOf(ext) >= 0) return 'md';
+      if (['py'].indexOf(ext) >= 0) return 'py';
+      if (['sh', 'bash', 'zsh', 'fish'].indexOf(ext) >= 0) return 'sh';
+      if (['yml', 'yaml', 'toml', 'ini', 'conf'].indexOf(ext) >= 0) return 'conf';
+      if (['go', 'rs', 'java', 'kt', 'swift', 'php', 'rb', 'c', 'h', 'cc', 'cpp', 'hpp', 'cs', 'sql'].indexOf(ext) >= 0) return 'code';
+      return 'plain';
+    };
+    /** 哪些语言里 `#` 是注释（CSS 里 `#fff` 是颜色，不能当注释）。 */
+    const hashComments = (lang) => lang === 'py' || lang === 'sh' || lang === 'conf' || lang === 'md';
+
+    /**
+     * 极简逐行高亮：注释 / 字符串 / 数字 / 关键字 / 类型 / 对象键 / 函数名 / 标签。
+     *
+     * 故意不做真正的词法分析：**逐行、无跨行状态**（多行字符串或块注释只会高亮到行尾）。
+     * 换来的是没有依赖、不会因为某个冷门语法出错，日常看 diff 足够。
+     * @returns {{ text: string, cls: string }[]}
+     */
+    const highlight = (text, lang) => {
+      const tokens = [];
+      const push = (value, cls) => {
+        if (value === '') return;
+        const last = tokens[tokens.length - 1];
+        if (cls === '' && last !== undefined && last.cls === '') last.text += value;
+        else tokens.push({ text: value, cls });
+      };
+      let rest = text;
+      const isHash = hashComments(lang);
+      while (rest !== '') {
+        let match;
+        const comment = isHash
+          ? /^(?:\/\/[^]*|\/\*[^]*|#[^]*|<!--[^]*)/.exec(rest)
+          : /^(?:\/\/[^]*|\/\*[^]*|<!--[^]*)/.exec(rest);
+        if (comment !== null) {
+          push(comment[0], TOKEN_CLASS.comment);
+          rest = rest.slice(comment[0].length);
+          continue;
+        }
+        match = /^(?:"(?:\\.|[^"\\])*"?|'(?:\\.|[^'\\])*'?|`(?:\\.|[^`\\])*`?)/.exec(rest);
+        if (match !== null && match[0] !== '') {
+          push(match[0], TOKEN_CLASS.string);
+          rest = rest.slice(match[0].length);
+          continue;
+        }
+        match = /^(?:\d[\w.]*)/.exec(rest);
+        if (match !== null) {
+          push(match[0], TOKEN_CLASS.number);
+          rest = rest.slice(match[0].length);
+          continue;
+        }
+        match = /^(?:<\/?[\w:-]+|\/?>|\/>)/.exec(rest);
+        if (match !== null && (lang === 'html' || lang === 'code')) {
+          push(match[0], TOKEN_CLASS.tag);
+          rest = rest.slice(match[0].length);
+          continue;
+        }
+        match = /^[A-Za-z_$][\w$]*/.exec(rest);
+        if (match !== null) {
+          const word = match[0];
+          rest = rest.slice(word.length);
+          if (KEYWORDS.has(word)) push(word, TOKEN_CLASS.keyword);
+          else if (TYPE_WORDS.has(word)) push(word, TOKEN_CLASS.type);
+          else {
+            const after = /^\s*(\??:|\(|=(?!=)>)/.exec(rest);
+            if (after !== null) push(word, after[1] === '(' || after[1] === '=>' ? TOKEN_CLASS.func : TOKEN_CLASS.key);
+            else push(word, '');
+          }
+          continue;
+        }
+        match = /^[\s\S]/.exec(rest);
+        push(match[0], '');
+        rest = rest.slice(1);
+      }
+      return tokens;
+    };
+
+    /** 文件类型徽章（照 Sourcegraph 那种小方标）。 */
+    const fileBadge = (path) => {
+      const name = String(path).toLowerCase();
+      const ext = name.lastIndexOf('.') < 0 ? '' : name.slice(name.lastIndexOf('.') + 1);
+      if (['ts', 'tsx'].indexOf(ext) >= 0) return { text: 'TS', cls: 'is-ts' };
+      if (['js', 'jsx', 'mjs', 'cjs'].indexOf(ext) >= 0) return { text: 'JS', cls: 'is-js' };
+      if (['json', 'jsonc'].indexOf(ext) >= 0) return { text: '{}', cls: 'is-json' };
+      if (['html', 'wxml', 'xml', 'vue'].indexOf(ext) >= 0) return { text: '<>', cls: 'is-html' };
+      if (['css', 'wxss', 'scss', 'less'].indexOf(ext) >= 0) return { text: '#', cls: 'is-css' };
+      if (['md', 'mdx'].indexOf(ext) >= 0) return { text: 'M↓', cls: 'is-md' };
+      return { text: '·', cls: 'is-other' };
+    };
+
+    /**
+     * 把一段统一 diff 拆成**块**：行（带行号）与「未修改行」折叠块。
+     *
+     * 行号语义照 Sourcegraph 那种单列：删除行显示旧行号，其余显示新行号。
+     * @returns {{ blocks: object[], hidden: number, added: number, deleted: number }}
      */
     const parseDiff = (text) => {
       const raw = typeof text === 'string' && text !== '' ? text.split('\n') : [];
       if (raw.length > 0 && raw[raw.length - 1] === '') raw.pop();
-      const lines = [];
+      const blocks = [];
       let hidden = 0;
+      let added = 0;
+      let deleted = 0;
+      let oldNo = 0;
+      let newNo = 0;
+      const contextRun = [];
+      const flushContext = () => {
+        if (contextRun.length === 0) return;
+        if (contextRun.length >= COLLAPSE_MIN) {
+          blocks.push({ kind: 'fold', key: blocks.length, lines: contextRun.slice(), count: contextRun.length });
+        } else {
+          for (const line of contextRun) blocks.push(line);
+        }
+        contextRun.length = 0;
+      };
       for (const line of raw) {
-        let type = 'context';
-        if (line.startsWith('@@')) type = 'hunk';
-        else if (line.startsWith('+++') || line.startsWith('---') || line.startsWith('diff --git')
-          || line.startsWith('index ') || line.startsWith('new file') || line.startsWith('deleted file')
-          || line.startsWith('similarity') || line.startsWith('rename ') || line.startsWith('Binary files')
-          || line.startsWith('old mode') || line.startsWith('new mode')) type = 'meta';
-        else if (line.startsWith('+')) type = 'add';
-        else if (line.startsWith('-')) type = 'del';
-        if (lines.length >= MAX_DIFF_LINES) {
+        if (line.startsWith('@@')) {
+          flushContext();
+          const head = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+          if (head !== null) {
+            oldNo = Number(head[1]);
+            newNo = Number(head[2]);
+          }
+          blocks.push({ kind: 'line', type: 'hunk', text: line, gutter: '' });
+          continue;
+        }
+        if (
+          line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('--- ') ||
+          line.startsWith('+++ ') || line.startsWith('new file') || line.startsWith('deleted file') ||
+          line.startsWith('similarity') || line.startsWith('rename ') || line.startsWith('Binary files') ||
+          line.startsWith('old mode') || line.startsWith('new mode') || line.startsWith('\\ No newline')
+        ) {
+          flushContext();
+          blocks.push({ kind: 'line', type: 'meta', text: line, gutter: '' });
+          continue;
+        }
+        if (line.startsWith('+')) {
+          flushContext();
+          added += 1;
+          blocks.push({ kind: 'line', type: 'add', text: line.slice(1), gutter: String(newNo), sign: '+' });
+          newNo += 1;
+          continue;
+        }
+        if (line.startsWith('-')) {
+          flushContext();
+          deleted += 1;
+          blocks.push({ kind: 'line', type: 'del', text: line.slice(1), gutter: String(oldNo), sign: '-' });
+          oldNo += 1;
+          continue;
+        }
+        const body = line.startsWith(' ') ? line.slice(1) : line;
+        contextRun.push({ kind: 'line', type: 'context', text: body, gutter: String(newNo), sign: ' ' });
+        oldNo += 1;
+        newNo += 1;
+      }
+      flushContext();
+      // 行数上限：把超出的行标成 hidden（保持块结构，折叠块按需截断）
+      const kept = [];
+      let drawn = 0;
+      for (const block of blocks) {
+        if (block.kind === 'fold') {
+          const room = Math.max(0, MAX_DIFF_LINES - drawn);
+          if (room === 0) {
+            hidden += block.count;
+            continue;
+          }
+          kept.push(block);
+          drawn += Math.min(block.count, room);
+          continue;
+        }
+        if (drawn >= MAX_DIFF_LINES) {
           hidden += 1;
           continue;
         }
-        lines.push({ type, text: line });
+        kept.push(block);
+        drawn += 1;
       }
-      return { lines, hidden };
+      return { blocks: kept, hidden, added, deleted };
     };
 
     /**
@@ -264,6 +489,8 @@ window.__ModuleLoader__.load({
       const [error, setError] = React.useState('');
       const [data, setData] = React.useState(null);
       const [collapsed, setCollapsed] = React.useState({});
+      /** 展开过的「N 行未修改」块：键是 `${path}:${块序号}` */
+      const [expanded, setExpanded] = React.useState({});
       const [mode, setMode] = React.useState('worktree'); // worktree | index
       const [onlyChat, setOnlyChat] = React.useState(false);
       const [busy, setBusy] = React.useState(false);
@@ -325,6 +552,20 @@ window.__ModuleLoader__.load({
           : { text: index, side: '已暂存', fellBack: true };
       };
 
+      /** 画一行：行号槽 + 符号 + 高亮后的代码。 */
+      const renderLine = (line, lang, key) =>
+        React.createElement('div', { key, className: 'git-diff-line is-' + line.type }, [
+          React.createElement('span', { key: 'g', className: 'git-diff-gutter' }, line.gutter === undefined ? '' : line.gutter),
+          React.createElement('span', { key: 's', className: 'git-diff-sign' }, line.sign === undefined ? '' : line.sign),
+          line.type === 'meta' || line.type === 'hunk'
+            ? React.createElement('span', { key: 't', className: 'git-diff-text' }, line.text)
+            : React.createElement('span', { key: 't', className: 'git-diff-text' },
+                highlight(line.text, lang).map((token, index) =>
+                  token.cls === ''
+                    ? token.text
+                    : React.createElement('span', { key: index, className: 'git-diff-tok ' + token.cls }, token.text))),
+        ]);
+
       const head = React.createElement('div', { key: 'head', className: 'git-diff-head' }, [
         React.createElement('span', { key: 'repo', className: 'git-diff-repo', title: data.root },
           `${data.branch}${data.upstream === '' ? '' : ' → ' + data.upstream}` +
@@ -373,19 +614,49 @@ window.__ModuleLoader__.load({
         ]));
       }
 
-      // 全部展开（默认），超出行数上限就停下并说明
+      // 全部展开（默认）；未修改的长段折起来，点一下就地展开
       let drawn = 0;
       let stopped = false;
       const sections = [];
       for (const file of files) {
         const badge = badgeOf(file.status);
+        const fileBadgeMark = fileBadge(file.path);
         const isCollapsed = collapsed[file.path] === true;
         const body = pickBody(file);
-        const parsed = isCollapsed ? { lines: [], hidden: 0 } : parseDiff(body.text);
-        const room = Math.max(0, MAX_DIFF_LINES - drawn);
-        const shown = parsed.lines.slice(0, room);
-        const cut = parsed.lines.length > shown.length;
-        drawn += shown.length;
+        const lang = languageOf(file.path);
+        const parsed = isCollapsed ? { blocks: [], hidden: 0, added: 0, deleted: 0 } : parseDiff(body.text);
+        const counts = parsed.added === 0 && parsed.deleted === 0
+          ? (file.added === undefined ? null : `+${file.added}/-${file.deleted}`)
+          : `+${parsed.added}/-${parsed.deleted}`;
+        const rows = [];
+        for (const block of parsed.blocks) {
+          if (drawn >= MAX_DIFF_LINES) { stopped = true; break; }
+          if (block.kind === 'fold') {
+            const foldKey = `${file.path}:${String(block.key)}`;
+            if (expanded[foldKey] === true) {
+              for (const line of block.lines) {
+                if (drawn >= MAX_DIFF_LINES) { stopped = true; break; }
+                drawn += 1;
+                rows.push(renderLine(line, lang, rows.length));
+              }
+            } else {
+              rows.push(
+                React.createElement('div', {
+                  key: 'fold' + String(block.key),
+                  className: 'git-diff-fold',
+                  title: '展开这段未修改的代码',
+                  onClick: () => setExpanded({ ...expanded, [foldKey]: true }),
+                }, [
+                  React.createElement('span', { key: 'i', className: 'git-diff-fold-icon' }, '⌄⌃'),
+                  React.createElement('span', { key: 't' }, `${block.count} 行未修改`),
+                ]),
+              );
+            }
+            continue;
+          }
+          drawn += 1;
+          rows.push(renderLine(block, lang, rows.length));
+        }
         sections.push(
           React.createElement('div', { key: file.path, className: 'git-diff-section' }, [
             React.createElement('button', {
@@ -396,44 +667,35 @@ window.__ModuleLoader__.load({
               title: isCollapsed ? '展开' : '折叠',
             }, [
               React.createElement('span', { key: 'c', className: 'git-diff-chevron' }, isCollapsed ? '▶' : '▼'),
-              React.createElement('span', { key: 's', className: 'git-diff-status ' + badge.className }, badge.text),
+              React.createElement('span', { key: 'b', className: 'git-diff-badge ' + fileBadgeMark.cls }, fileBadgeMark.text),
               React.createElement('span', { key: 'p', className: 'git-diff-path' }, file.path),
+              counts === null ? null
+                : React.createElement('span', { key: 'n', className: 'git-diff-counts' }, counts),
               file.fromChat === true ? React.createElement('span', { key: 'd', className: 'git-diff-dot', title: '本次对话改过' }) : null,
-              React.createElement('span', { key: 'side', className: 'git-diff-side' }, body.side),
-              file.added === undefined ? null
-                : React.createElement('span', { key: 'n', className: 'git-diff-counts' }, `+${file.added}/-${file.deleted}`),
+              React.createElement('span', { key: 's', className: 'git-diff-side' }, body.side),
             ].filter(Boolean)),
             ...(isCollapsed ? [] : [
               file.binary === true
-                ? React.createElement('div', { key: 'b', className: 'git-diff-note' }, '二进制文件，不展开 diff')
+                ? React.createElement('div', { key: 'bin', className: 'git-diff-note' }, '二进制文件，不展开 diff')
                 : null,
               ...(typeof file.note === 'string' && file.note !== ''
                 ? [React.createElement('div', { key: 'note', className: 'git-diff-note' }, file.note)]
                 : []),
-              React.createElement('div', { key: 'body', className: 'git-diff-body' },
-                shown.map((line, index) =>
-                  React.createElement('div', { key: index, className: 'git-diff-line is-' + line.type }, [
-                    React.createElement('span', { key: 's', className: 'git-diff-sign' },
-                      line.type === 'add' ? '+' : line.type === 'del' ? '-' : ''),
-                    React.createElement('span', { key: 't', className: 'git-diff-text' }, line.text),
-                  ]))),
-              cut || file.truncated === true
+              React.createElement('div', { key: 'body', className: 'git-diff-body' }, rows),
+              file.truncated === true
                 ? React.createElement('div', { key: 'trunc', className: 'git-diff-note' },
-                    `（已截断${cut ? `，这个文件还有 ${parsed.lines.length - shown.length} 行没显示` : ''}；完整内容用 git diff ${body.side === '已暂存' ? '--cached ' : ''}-- ${file.path}）`)
+                    `（这个文件太长，只显示了一部分；完整内容用 git diff ${body.side === '已暂存' ? '--cached ' : ''}-- ${file.path}）`)
                 : null,
             ].filter(Boolean)),
           ].filter(Boolean)),
         );
-        if (drawn >= MAX_DIFF_LINES) {
-          stopped = true;
-          break;
-        }
+        if (stopped) break;
       }
 
       const scroller = [React.createElement('div', { key: 'sections' }, sections)];
       if (stopped) {
         scroller.push(React.createElement('div', { key: 'stopped', className: 'git-diff-note' },
-          `已显示到 ${MAX_DIFF_LINES} 行的上限，其余文件没展开；可以折叠上面的文件，或用 git diff 看完整内容。`));
+          `已显示到 ${MAX_DIFF_LINES} 行的上限，其余没展开；折叠上面的文件，或用 git diff 看完整内容。`));
       }
       nodes.push(React.createElement('div', { key: 'scroll', className: 'git-diff-scroll' }, scroller));
       return React.createElement('div', { className: 'git-diff-root' }, nodes);

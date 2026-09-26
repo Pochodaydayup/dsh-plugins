@@ -46,6 +46,11 @@ const MAX_UNTRACKED_BYTES = 512 * 1024;
 const MAX_UNTRACKED_LINES = 4000;
 /** 只读 git 命令的超时。 */
 const GIT_TIMEOUT_MS = 30_000;
+/**
+ * diff 的上下文行数。默认的 `-U3` 折不出「N 行未修改」（一段最多 6 行），
+ * 而且看改动时前后看不到几行代码；`-U10` 让折叠与展开都有意义。
+ */
+const GIT_CONTEXT = '10';
 /** 工具返回里最多列多少个文件。 */
 const MAX_FILES = 500;
 
@@ -460,8 +465,8 @@ export function apply(ctx) {
    * 不把客户端给的字符串塞进 git 参数。
    */
   const readAllDiffs = async (repo) => {
-    const worktreeAll = await git(['diff', '--no-color', '-M'], repo.root);
-    const indexAll = await git(['diff', '--cached', '--no-color', '-M'], repo.root);
+    const worktreeAll = await git(['diff', `-U${GIT_CONTEXT}`, '--no-color', '-M'], repo.root);
+    const indexAll = await git(['diff', '--cached', `-U${GIT_CONTEXT}`, '--no-color', '-M'], repo.root);
     const worktreeMap = splitByFile(worktreeAll.stdout);
     const indexMap = splitByFile(indexAll.stdout);
 
@@ -551,8 +556,8 @@ export function apply(ctx) {
       let indexText = pick(indexMap);
       let fallbackTruncated = false;
       if (worktreeText === '' && indexText === '') {
-        const extraWorktree = await git(['diff', '--no-color', '-M', '--', ...candidates], repo.root);
-        const extraIndex = await git(['diff', '--cached', '--no-color', '-M', '--', ...candidates], repo.root);
+        const extraWorktree = await git(['diff', `-U${GIT_CONTEXT}`, '--no-color', '-M', '--', ...candidates], repo.root);
+        const extraIndex = await git(['diff', '--cached', `-U${GIT_CONTEXT}`, '--no-color', '-M', '--', ...candidates], repo.root);
         worktreeText = extraWorktree.ok ? extraWorktree.stdout : '';
         indexText = extraIndex.ok ? extraIndex.stdout : '';
         fallbackTruncated = !extraWorktree.ok && !extraIndex.ok;
