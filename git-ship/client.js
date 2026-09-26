@@ -131,7 +131,8 @@ window.__ModuleLoader__.load({
   background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-tertiary); }
 
 .git-diff-body { font-family: var(--dsw-font-family-mono, ui-monospace, monospace); }
-/* 一行 = [行号][符号][代码]；整行按内容撑开，横向也能滚 */
+/* 一行 = [行号][符号][代码]。默认自动换行，宽度随面板自适应（见 .is-wrap 那两条）；
+   关掉换行时整行按内容撑开、横向滚。 */
 .git-diff-line { display: flex; white-space: pre; min-width: max-content;
   font-size: var(--dsh-content-font-size-secondary, 13px); line-height: 1.65; }
 .git-diff-line > .git-diff-gutter { flex: none; width: 50px; padding-right: 9px; text-align: right;
@@ -141,6 +142,9 @@ window.__ModuleLoader__.load({
 .git-diff-line > .git-diff-sign { flex: none; width: 16px; text-align: center; user-select: none;
   color: var(--dsw-alias-label-tertiary); }
 .git-diff-line > .git-diff-text { flex: none; padding-right: 12px; }
+/* 自动换行：行宽锁在面板宽度内，长行走同一列继续（不再撑出横向滚动条） */
+.git-diff-root.is-wrap .git-diff-line { white-space: pre-wrap; min-width: 0; width: 100%; }
+.git-diff-root.is-wrap .git-diff-line > .git-diff-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .git-diff-line.is-add { background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 13%, transparent); }
 .git-diff-line.is-del { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 13%, transparent); }
 .git-diff-line.is-add > .git-diff-gutter { background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 20%, transparent); }
@@ -503,6 +507,8 @@ window.__ModuleLoader__.load({
       const [expanded, setExpanded] = React.useState({});
       const [mode, setMode] = React.useState('worktree'); // worktree | index
       const [onlyChat, setOnlyChat] = React.useState(false);
+      /** 自动换行：默认开，这样 diff 宽度跟着面板/窗口自适应，不用横向滚。 */
+      const [wrap, setWrap] = React.useState(true);
       const [busy, setBusy] = React.useState(false);
 
       const visible = useTabInfo === undefined ? true : useTabInfo().tab.visible !== false;
@@ -591,13 +597,19 @@ window.__ModuleLoader__.load({
           title: '只看本次对话改过的文件',
         }, '只看本次'),
         React.createElement('button', {
+          key: 'wrap', type: 'button',
+          className: 'git-diff-btn' + (wrap ? ' is-on' : ''),
+          onClick: () => setWrap(!wrap),
+          title: wrap ? '关掉自动换行：长行横向滚动' : '打开自动换行：宽度跟着面板走',
+        }, '自动换行'),
+        React.createElement('button', {
           key: 'refresh', type: 'button', className: 'git-diff-btn', disabled: busy,
           onClick: refresh,
         }, busy ? '读取中…' : '刷新'),
       ].filter(Boolean));
 
       if (allFiles.length === 0) {
-        return React.createElement('div', { className: 'git-diff-root' }, [
+        return React.createElement('div', { className: 'git-diff-root' + (wrap ? ' is-wrap' : '') }, [
           head,
           React.createElement('div', { key: 'clean', className: 'git-diff-empty' }, '工作区干净，没有未提交的改动'),
         ]);
@@ -606,7 +618,7 @@ window.__ModuleLoader__.load({
       const nodes = [head];
       if (files.length === 0) {
         nodes.push(React.createElement('div', { key: 'none', className: 'git-diff-empty' }, '没有「本次对话」改过的文件'));
-        return React.createElement('div', { className: 'git-diff-root' }, nodes);
+        return React.createElement('div', { className: 'git-diff-root' + (wrap ? ' is-wrap' : '') }, nodes);
       }
 
       if (anyBothSides) {
@@ -708,7 +720,7 @@ window.__ModuleLoader__.load({
           `已显示到 ${MAX_DIFF_LINES} 行的上限，其余没展开；折叠上面的文件，或用 git diff 看完整内容。`));
       }
       nodes.push(React.createElement('div', { key: 'scroll', className: 'git-diff-scroll' }, scroller));
-      return React.createElement('div', { className: 'git-diff-root' }, nodes);
+      return React.createElement('div', { className: 'git-diff-root' + (wrap ? ' is-wrap' : '') }, nodes);
     }
 
     /** 顶部 tab chip：图标 + 文案。 */
