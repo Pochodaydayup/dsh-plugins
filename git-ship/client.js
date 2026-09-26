@@ -41,7 +41,7 @@ window.__ModuleLoader__.load({
     const MAX_DIFF_LINES = 3000;
     /** 连续多少行未修改就折起来（点击可展开）。 */
     const COLLAPSE_MIN = 6;
-    /** 轮询间隔：只在「tab 可见 + 窗口聚焦」时按这个间隔重读，默认开，可关。 */
+    /** 轮询间隔：只在「tab 可见 + 窗口聚焦」时按这个间隔重读（没有开关，一直开）。 */
     const POLL_MS = 3000;
 
     // ────────────────────────────────────────────────────────────── 样式
@@ -511,11 +511,9 @@ window.__ModuleLoader__.load({
       const [onlyChat, setOnlyChat] = React.useState(false);
       /** 自动换行：默认开，这样 diff 宽度跟着面板/窗口自适应，不用横向滚。 */
       const [wrap, setWrap] = React.useState(true);
-      /** 3 秒轮询：默认开，仅在 tab 可见且窗口聚焦时跑。 */
-      const [poll, setPoll] = React.useState(true);
-      /** 有请求在路上时就跳过这一拍，避免堆叠（大仓库一次 git diff 可能几百毫秒）。 */
-      const inFlightRef = React.useRef(false);
       const [busy, setBusy] = React.useState(false);
+      /** 上一拍还没回来就跳过这一拍，避免堆叠（大仓库一次 git diff 可能几百毫秒）。 */
+      const inFlightRef = React.useRef(false);
 
       const visible = useTabInfo === undefined ? true : useTabInfo().tab.visible !== false;
       // loader 走 ref：inject 每次渲染都给新函数身份，进依赖会变成每次渲染重新取数
@@ -527,8 +525,10 @@ window.__ModuleLoader__.load({
       const [loadedAt, setLoadedAt] = React.useState(0);
 
       /**
-       * @param silent - true 表示后台轮询：不显示「读取中…」，免得每 3 秒闪一次按钮文案。
-       *   ⚠️ 不要写成 `onClick={refresh}` —— React 会把事件对象当第一个参数传进来。
+       * 重新读一次。
+       * @param silent - 轮询调用时传 true：不动按钮的禁用态（用户自己点才需要那种反馈）。
+       * ⚠️ 调用处写成 `onClick={() => refresh()}` —— 直接写 `onClick={refresh}` 的话，
+       * React 会把事件对象当第一个参数传进来。
        */
       const refresh = React.useCallback(async (silent) => {
         const quiet = silent === true;
@@ -550,11 +550,11 @@ window.__ModuleLoader__.load({
       }, []);
 
       /**
-       * 什么时候自动取一次数据 —— **只有这两种事件，没有轮询**：
+       * 什么时候自动取一次数据 —— **只有这几种事件，没有轮询**：
        *   ① 首次显示（挂载）；
        *   ② tab 从隐藏变可见（切走再切回来）；
        *   ③ 窗口重新获得焦点（在编辑器里改完代码切回来）。
-       * 其余时间靠头部那个「刷新」按钮手动取。
+       * 其余时间靠头部那个「刷新」按钮手动取（不做定时轮询：git diff 是实打实的 git 调用）。
        *
        * ⚠️ 早先这里写的是 `!loadedRef.current || data === null`：第一次之后就再也不满足了，
        * 所以「切回来补一次」根本没生效（注释与行为不符）。改成用 wasVisibleRef 认「变可见」这个转变。
@@ -576,16 +576,16 @@ window.__ModuleLoader__.load({
       }, [visible, data, refresh]);
 
       /**
-       * 3 秒轮询（可关）。两重闸门，避免白烧 CPU：
+       * 3 秒轮询（没有开关，一直开）。两重闸门，避免白烧 CPU：
        *   ① 只在 tab 可见时存在；② 窗口失焦就**停掉定时器**（不是空转），回到前台再恢复。
        * 另外上一拍还没回来就跳过，不堆叠。
        */
       React.useEffect(() => {
-        if (!poll || !visible) return undefined;
+        if (!visible) return undefined;
         let timer;
         const tick = () => {
           if (inFlightRef.current) return;
-          refresh(true);   // 静默：不切「读取中…」
+          refresh(true);
         };
         const start = () => {
           if (timer === undefined) timer = window.setInterval(tick, POLL_MS);
@@ -607,7 +607,7 @@ window.__ModuleLoader__.load({
           window.removeEventListener('focus', onFocus);
           window.removeEventListener('blur', onBlur);
         };
-      }, [poll, visible, refresh]);
+      }, [visible, refresh]);
 
       if (phase === 'loading') {
         return React.createElement('div', { className: 'git-diff-root' },
@@ -666,14 +666,6 @@ window.__ModuleLoader__.load({
           title: '只看本次对话改过的文件',
         }, '只看本次'),
         React.createElement('button', {
-          key: 'poll', type: 'button',
-          className: 'git-diff-btn' + (poll ? ' is-on' : ''),
-          onClick: () => setPoll(!poll),
-          title: poll
-            ? '关掉 3 秒轮询（改成手动刷新）'
-            : `打开 3 秒轮询（仅在 tab 可见且窗口聚焦时）`,
-        }, '3s 轮询'),
-        React.createElement('button', {
           key: 'wrap', type: 'button',
           className: 'git-diff-btn' + (wrap ? ' is-on' : ''),
           onClick: () => setWrap(!wrap),
@@ -683,7 +675,7 @@ window.__ModuleLoader__.load({
           key: 'refresh', type: 'button', className: 'git-diff-btn', disabled: busy,
           title: loadedAt === 0 ? '重新读一次' : `重新读一次（上次 ${new Date(loadedAt).toLocaleTimeString()}）`,
           onClick: () => refresh(),
-        }, busy ? '读取中…' : '刷新'),
+        }, '刷新'),
       ].filter(Boolean));
 
       if (allFiles.length === 0) {
