@@ -1343,6 +1343,47 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * guide（右侧边栏「+」菜单）里的彩色图标。
+     *
+     * 官方彩色图标来自 `@deepseek-ai/dsh-client-ui-primitives` 的 `GuideArtwork*`，但那是个
+     * **普通组件库**（没有 dsh.client / client bundle），官方插件是在**打包时**把它内联进各自
+     * bundle 的；这份 client.js 是手写、原样加载的，没有打包器也 require 不到它，
+     * 所以照官方的接口自己画：viewBox 36×36、`size` 由 guide 传 22 或 26、
+     * 颜色用官方色板（#539CFA 蓝 / #679EFE 浅蓝 / #FFBC4D 琥珀 / #FFCD78 浅琥珀 / #A797FC 紫 / #45E7A4 青绿）。
+     * 不给 icon 时框架会画灰色的 CubeGlyph 兜底 —— 就是之前那个灰方块。
+     */
+    const AnnotateArtwork = ({ size = 26, className }) =>
+      React.createElement(
+        'svg',
+        {
+          width: size,
+          height: size,
+          className,
+          viewBox: '0 0 36 36',
+          fill: 'none',
+          xmlns: 'http://www.w3.org/2000/svg',
+          'aria-hidden': 'true',
+        },
+        [
+          // 浏览器窗口 + 标题栏圆点
+          React.createElement('rect', { key: 'win', x: 5.5, y: 7.5, width: 25, height: 21, rx: 4,
+            stroke: '#539CFA', strokeWidth: 2 }),
+          React.createElement('path', { key: 'bar', d: 'M5.5 13.5h25', stroke: '#679EFE', strokeWidth: 2 }),
+          React.createElement('circle', { key: 'd1', cx: 9.6, cy: 10.6, r: 1, fill: '#A797FC' }),
+          React.createElement('circle', { key: 'd2', cx: 13.1, cy: 10.6, r: 1, fill: '#45E7A4' }),
+          // 页面内容
+          React.createElement('path', { key: 'line1', d: 'M10 18h7', stroke: '#679EFE', strokeWidth: 2, strokeLinecap: 'round' }),
+          // 铅笔（标注）
+          React.createElement('path', {
+            key: 'pen',
+            d: 'M19.4 23.6l7.1-7.1a1.7 1.7 0 0 1 2.4 0l.6.6a1.7 1.7 0 0 1 0 2.4l-7.1 7.1-3.9.9.9-3.9z',
+            fill: '#FFBC4D',
+          }),
+          React.createElement('path', { key: 'tip', d: 'M19.4 23.6l2.9 2.9-3.9.9.9-3.9z', fill: '#FFCD78' }),
+        ],
+      );
+
+    /**
      * 顶部 tab chip 的标题：图标 + 文案，形状照官方 `BrowserTitle`
      * （官方是 Fragment + `IconGlobeOutlineRegular`；这里包一层 span 自己保证对齐）。
      */
@@ -1667,6 +1708,8 @@ window.__ModuleLoader__.load({
                     order: 40,
                     title: () => '标注浏览器',
                     description: () => '打开页面，点元素写批注，送进输入框',
+                    // 不给 icon 时框架画灰色 CubeGlyph 兜底；给了就用自己的彩色图
+                    icon: AnnotateArtwork,
                   },
                 ],
               }),

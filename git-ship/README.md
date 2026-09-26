@@ -37,7 +37,10 @@
 
 ## 二、Git Diff（右侧边栏 tab）
 
-在右侧边栏点 **`+` → Git Diff** 打开（每个会话一个实例，切换 tab / 会话不卸载，折叠状态保留）。
+在右侧边栏点 **`+` → Git Diff** 打开（那个「+」菜单里的图标是自绘彩色 SVG —— 官方彩色图标来自
+`@deepseek-ai/dsh-client-ui-primitives` 的 `GuideArtwork*`，但那个包不是客户端模块、图标是各插件
+**打包时内联**的；这份手写的 client.js 没有打包器，所以照官方接口（viewBox 36×36、`size` 22/26）
+和官方色板自己画；不给 `icon` 框架会退化成灰色 CubeGlyph）（每个会话一个实例，切换 tab / 会话不卸载，折叠状态保留）。
 
 **默认把所有文件的 diff 全部展开**，每段段头（sticky）可以单独折叠；样式照着 Sourcegraph 那种 diff 做：
 

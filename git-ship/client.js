@@ -248,6 +248,41 @@ window.__ModuleLoader__.load({
       );
     }
 
+    /**
+     * guide（右侧边栏「+」菜单）里的彩色图标。
+     *
+     * 官方那些彩色图标来自 `@deepseek-ai/dsh-client-ui-primitives` 的 `GuideArtwork*` ——
+     * 但那个包**不是客户端模块**（没有 dsh.client / client bundle），它的图标是各自插件
+     * **打包时内联**的。我这份 client.js 是手写、原样加载的，没有打包器，require 不到，
+     * 所以自己画：尺寸/接口照官方（viewBox 36×36、`size` 由 guide 传 22 或 26）、
+     * 颜色也照官方色板（#539CFA 蓝 / #45E7A4 青绿 / #FF7A7A 红）。
+     * 不给 icon 的话框架会画一个灰色的 CubeGlyph 兜底 —— 就是之前那个灰方块。
+     */
+    const GitDiffArtwork = ({ size = 26, className }) =>
+      React.createElement(
+        'svg',
+        {
+          width: size,
+          height: size,
+          className,
+          viewBox: '0 0 36 36',
+          fill: 'none',
+          xmlns: 'http://www.w3.org/2000/svg',
+          'aria-hidden': 'true',
+        },
+        [
+          React.createElement('rect', { key: 'box', x: 5.5, y: 6.5, width: 25, height: 23, rx: 4,
+            stroke: '#539CFA', strokeWidth: 2 }),
+          // 新增行：绿色 + 与一段绿条
+          React.createElement('path', { key: 'plus-h', d: 'M10 14h5', stroke: '#45E7A4', strokeWidth: 2, strokeLinecap: 'round' }),
+          React.createElement('path', { key: 'plus-v', d: 'M12.5 11.5v5', stroke: '#45E7A4', strokeWidth: 2, strokeLinecap: 'round' }),
+          React.createElement('path', { key: 'add-bar', d: 'M18.5 14h7.5', stroke: '#45E7A4', strokeWidth: 2, strokeLinecap: 'round' }),
+          // 删除行：红色 − 与一段红条
+          React.createElement('path', { key: 'minus', d: 'M10 22h5', stroke: '#FF7A7A', strokeWidth: 2, strokeLinecap: 'round' }),
+          React.createElement('path', { key: 'del-bar', d: 'M18.5 22h5', stroke: '#FF7A7A', strokeWidth: 2, strokeLinecap: 'round' }),
+        ],
+      );
+
     /** git 分支图标（和 dock 那个同一个画法）。 */
     const DiffIcon = ({ size = 14 }) =>
       React.createElement(
@@ -963,6 +998,8 @@ window.__ModuleLoader__.load({
                     order: 45,
                     title: () => 'Git Diff',
                     description: () => '看这个会话仓库的改动，逐个文件看 diff',
+                    // 不给 icon 时框架画灰色 CubeGlyph 兜底；给了就用自己的彩色图
+                    icon: GitDiffArtwork,
                   },
                 ],
               }),
