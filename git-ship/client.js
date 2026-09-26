@@ -14,7 +14,7 @@
  *
  * ② 右侧边栏的「Git Diff」tab（`sidebarRightTabs` + `sidebar.right.pane.tab[.title]`）：
  *    纯 React 面板（不像标注浏览器那样需要 webview），数据来自宿主那两条**只读**路由
- *    `/api/git-ship/status` 与 `/api/git-ship/diff` —— 复用 annotate 那套「回环 + 标记头」的安全约定。
+ *    `/api/git-ship/diffs`（一次给全：状态 + 所有文件的 diff）—— 复用 annotate 那套「回环 + 标记头」的安全约定。
  *
  * 约束：只能 `require('react')`。
  */
@@ -112,6 +112,14 @@ window.__ModuleLoader__.load({
 .git-diff-note { padding: 10px; color: var(--dsw-alias-label-tertiary); line-height: 18px; }
 .git-diff-note.is-error { color: var(--dsw-alias-state-error-primary); }
 .git-diff-empty { padding: 16px 12px; color: var(--dsw-alias-label-tertiary); text-align: center; line-height: 20px; }
+.git-diff-section { border-bottom: 1px solid var(--dsw-alias-border-l3); }
+.git-diff-section-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 10px;
+  border: none; background: var(--dsw-alias-bg-layer-3); color: inherit; font: inherit; font-size: 12px;
+  cursor: pointer; text-align: left; min-width: 0; position: sticky; top: 0; z-index: 1; }
+.git-diff-section-head:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.git-diff-chevron { flex: none; width: 10px; color: var(--dsw-alias-label-tertiary); font-size: 9px; }
+.git-diff-side { flex: none; font-size: 10px; padding: 0 5px; border-radius: 999px;
+  background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-tertiary); }
 .git-diff-title { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
 .git-diff-title-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 `;
@@ -245,204 +253,217 @@ window.__ModuleLoader__.load({
 
     /**
      * 右侧边栏的「Git Diff」面板。
-     * @param props - 框架给的 { useTabInfo } + inject 的 { sessionId, loadStatus, loadDiff }。
+     *
+     * **默认把所有文件的 diff 全部展开**（像 `git diff` 的输出），顶部的文件列表是目录：
+     * 点一下跳到对应那一段，段头可以单独折叠。
+     * @param props - 框架给的 { useTabInfo } + inject 的 { sessionId, loadDiffs }。
      */
     function GitDiffTab(props) {
       ensureCss();
-      const { sessionId, loadStatus, loadDiff, useTabInfo } = props;
+      const { loadDiffs, useTabInfo } = props;
       /** loading | ready | error */
       const [phase, setPhase] = React.useState('loading');
       const [error, setError] = React.useState('');
-      const [status, setStatus] = React.useState(null);
-      const [selected, setSelected] = React.useState('');
-      const [diff, setDiff] = React.useState(null);
-      const [diffPhase, setDiffPhase] = React.useState('idle'); // idle | loading | error
-      const [diffError, setDiffError] = React.useState('');
+      const [data, setData] = React.useState(null);
+      const [collapsed, setCollapsed] = React.useState({});
       const [mode, setMode] = React.useState('worktree'); // worktree | index
       const [onlyChat, setOnlyChat] = React.useState(false);
       const [busy, setBusy] = React.useState(false);
 
       const visible = useTabInfo === undefined ? true : useTabInfo().tab.visible !== false;
-      /**
-       * loader 走 ref：`inject` 每次渲染都会给出**新的函数身份**，直接进 useEffect 依赖
-       * 会变成「每次渲染都重新取数」。所以依赖只留 `selected` / `visible` 这些真值。
-       */
-      const loadersRef = React.useRef({ loadStatus, loadDiff });
-      loadersRef.current = { loadStatus, loadDiff };
-      const selectedRef = React.useRef(selected);
-      selectedRef.current = selected;
+      // loader 走 ref：inject 每次渲染都给新函数身份，进依赖会变成每次渲染重新取数
+      const loaderRef = React.useRef(loadDiffs);
+      loaderRef.current = loadDiffs;
+      const sectionRefs = React.useRef({});
+      const loadedRef = React.useRef(false);
 
-      const refresh = React.useCallback(
-        async (keepSelection) => {
-          setBusy(true);
-          try {
-            const value = await loadersRef.current.loadStatus();
-            setStatus(value);
-            setPhase('ready');
-            setError('');
-            const files = value.files === undefined ? [] : value.files;
-            const current = keepSelection === true ? selectedRef.current : '';
-            const stillThere = files.some((file) => file.path === current);
-            if (!stillThere) {
-              setSelected(files.length === 0 ? '' : files[0].path);
-              setDiff(null);
-            }
-          } catch (problem) {
-            setPhase('error');
-            setError(problem instanceof Error ? problem.message : String(problem));
-          } finally {
-            setBusy(false);
-          }
-        },
-        [],
-      );
-
-      // 打开时读一次；tab 从隐藏变可见时再读一次（省得看到过期数据）
-      React.useEffect(() => {
-        if (visible && status === null && phase !== 'error') refresh(false);
-      }, [visible, status, phase, refresh]);
-
-      // 选中的文件变了 → 读它的 diff
-      React.useEffect(() => {
-        if (selected === '') {
-          setDiff(null);
-          return undefined;
+      const refresh = React.useCallback(async () => {
+        setBusy(true);
+        try {
+          const value = await loaderRef.current();
+          setData(value);
+          setPhase('ready');
+          setError('');
+        } catch (problem) {
+          setPhase('error');
+          setError(problem instanceof Error ? problem.message : String(problem));
+        } finally {
+          setBusy(false);
         }
-        let cancelled = false;
-        setDiffPhase('loading');
-        setMode('worktree');
-        loadersRef.current
-          .loadDiff(selected)
-          .then((value) => {
-            if (cancelled) return;
-            setDiff(value);
-            setDiffPhase('idle');
-            setDiffError('');
-          })
-          .catch((problem) => {
-            if (cancelled) return;
-            setDiff(null);
-            setDiffPhase('error');
-            setDiffError(problem instanceof Error ? problem.message : String(problem));
-          });
-        return () => {
-          cancelled = true;
-        };
-      }, [selected]);
+      }, []);
+
+      // 挂载时读一次；tab 从隐藏变可见时补一次（避免看到过期数据）
+      React.useEffect(() => {
+        if (!visible) return;
+        if (!loadedRef.current || data === null) {
+          loadedRef.current = true;
+          refresh();
+        }
+      }, [visible, data, refresh]);
 
       if (phase === 'loading') {
         return React.createElement('div', { className: 'git-diff-root' },
-          React.createElement('div', { className: 'git-diff-note' }, '正在读仓库状态…'));
+          React.createElement('div', { className: 'git-diff-note' }, '正在读仓库状态与 diff…'));
       }
       if (phase === 'error') {
         return React.createElement('div', { className: 'git-diff-root' }, [
           React.createElement('div', { key: 'n', className: 'git-diff-note is-error' }, error),
           React.createElement('div', { key: 'b', className: 'git-diff-modes' },
-            React.createElement('button', { type: 'button', className: 'git-diff-btn', onClick: () => refresh(false) }, '重试')),
+            React.createElement('button', { type: 'button', className: 'git-diff-btn', onClick: refresh }, '重试')),
         ]);
       }
 
-      const files = status.files === undefined ? [] : status.files;
-      const shown = onlyChat ? files.filter((file) => file.fromChat === true) : files;
-      const head = [];
-      head.push(
-        React.createElement('div', { key: 'head', className: 'git-diff-head' }, [
-          React.createElement('span', { key: 'repo', className: 'git-diff-repo', title: status.root },
-            `${status.branch}${status.upstream === '' ? '' : ' → ' + status.upstream}` +
-              (status.ahead === 0 && status.behind === 0 ? '' : `  ↑${status.ahead} ↓${status.behind}`)),
-          React.createElement('span', { key: 'n', className: 'git-diff-chip' }, `${files.length} 个改动`),
-          status.fromChat > 0
-            ? React.createElement('span', { key: 'c', className: 'git-diff-chip is-chat' }, `本次对话 ${status.fromChat}`)
-            : null,
-          React.createElement('button', {
-            key: 'filter', type: 'button',
-            className: 'git-diff-btn' + (onlyChat ? ' is-on' : ''),
-            onClick: () => setOnlyChat(!onlyChat),
-            title: '只看本次对话改过的文件',
-          }, '只看本次'),
-          React.createElement('button', {
-            key: 'refresh', type: 'button', className: 'git-diff-btn', disabled: busy,
-            onClick: () => refresh(true),
-          }, busy ? '读取中…' : '刷新'),
-        ].filter(Boolean)),
-      );
+      const allFiles = data.files === undefined ? [] : data.files;
+      const files = onlyChat ? allFiles.filter((file) => file.fromChat === true) : allFiles;
+      const anyBothSides = allFiles.some((file) => (file.worktree || '') !== '' && (file.index || '') !== '');
+      /** 按全局模式取该文件要显示的那一侧；请求的那侧为空就退回另一侧并标出来。 */
+      const pickBody = (file) => {
+        const worktree = typeof file.worktree === 'string' ? file.worktree : '';
+        const index = typeof file.index === 'string' ? file.index : '';
+        if (mode === 'index') {
+          return index !== '' ? { text: index, side: '已暂存', fellBack: false }
+            : { text: worktree, side: '工作区', fellBack: true };
+        }
+        return worktree !== '' ? { text: worktree, side: '工作区', fellBack: false }
+          : { text: index, side: '已暂存', fellBack: true };
+      };
 
-      if (files.length === 0) {
-        head.push(React.createElement('div', { key: 'clean', className: 'git-diff-empty' }, '工作区干净，没有未提交的改动'));
-        return React.createElement('div', { className: 'git-diff-root' }, head);
+      const head = React.createElement('div', { key: 'head', className: 'git-diff-head' }, [
+        React.createElement('span', { key: 'repo', className: 'git-diff-repo', title: data.root },
+          `${data.branch}${data.upstream === '' ? '' : ' → ' + data.upstream}` +
+            (data.ahead === 0 && data.behind === 0 ? '' : `  ↑${data.ahead} ↓${data.behind}`)),
+        React.createElement('span', { key: 'n', className: 'git-diff-chip' }, `${allFiles.length} 个改动`),
+        data.fromChat > 0
+          ? React.createElement('span', { key: 'c', className: 'git-diff-chip is-chat' }, `本次对话 ${data.fromChat}`)
+          : null,
+        React.createElement('button', {
+          key: 'filter', type: 'button',
+          className: 'git-diff-btn' + (onlyChat ? ' is-on' : ''),
+          onClick: () => setOnlyChat(!onlyChat),
+          title: '只看本次对话改过的文件',
+        }, '只看本次'),
+        React.createElement('button', {
+          key: 'refresh', type: 'button', className: 'git-diff-btn', disabled: busy,
+          onClick: refresh,
+        }, busy ? '读取中…' : '刷新'),
+      ].filter(Boolean));
+
+      if (allFiles.length === 0) {
+        return React.createElement('div', { className: 'git-diff-root' }, [
+          head,
+          React.createElement('div', { key: 'clean', className: 'git-diff-empty' }, '工作区干净，没有未提交的改动'),
+        ]);
       }
 
-      head.push(
-        React.createElement('div', { key: 'files', className: 'git-diff-files' },
-          shown.map((file) => {
-            const badge = badgeOf(file.status);
-            return React.createElement('button', {
-              key: file.path,
+      // 目录：点一下跳到那一段
+      const toc = React.createElement('div', { key: 'toc', className: 'git-diff-files' },
+        files.map((file) => {
+          const badge = badgeOf(file.status);
+          return React.createElement('button', {
+            key: file.path,
+            type: 'button',
+            className: 'git-diff-file',
+            title: file.original === undefined ? file.path : `${file.original} → ${file.path}`,
+            onClick: () => {
+              const element = sectionRefs.current[file.path];
+              if (element !== undefined && typeof element.scrollIntoView === 'function') {
+                element.scrollIntoView({ block: 'start' });
+              }
+            },
+          }, [
+            React.createElement('span', { key: 's', className: 'git-diff-status ' + badge.className }, badge.text),
+            React.createElement('span', { key: 'p', className: 'git-diff-path' }, file.path),
+            file.fromChat === true ? React.createElement('span', { key: 'd', className: 'git-diff-dot', title: '本次对话改过' }) : null,
+            file.added === undefined ? null
+              : React.createElement('span', { key: 'n', className: 'git-diff-counts' }, `+${file.added}/-${file.deleted}`),
+          ].filter(Boolean));
+        }));
+
+      const nodes = [head, toc];
+      if (files.length === 0) {
+        nodes.push(React.createElement('div', { key: 'none', className: 'git-diff-empty' }, '没有「本次对话」改过的文件'));
+        return React.createElement('div', { className: 'git-diff-root' }, nodes);
+      }
+
+      if (anyBothSides) {
+        nodes.push(React.createElement('div', { key: 'modes', className: 'git-diff-modes' }, [
+          React.createElement('button', {
+            key: 'w', type: 'button',
+            className: 'git-diff-btn' + (mode === 'worktree' ? ' is-on' : ''),
+            onClick: () => setMode('worktree'),
+          }, '工作区'),
+          React.createElement('button', {
+            key: 'i', type: 'button',
+            className: 'git-diff-btn' + (mode === 'index' ? ' is-on' : ''),
+            onClick: () => setMode('index'),
+          }, '已暂存'),
+        ]));
+      }
+
+      // 全部展开（默认），超出行数上限就停下并说明
+      let drawn = 0;
+      let stopped = false;
+      const sections = [];
+      for (const file of files) {
+        const badge = badgeOf(file.status);
+        const isCollapsed = collapsed[file.path] === true;
+        const body = pickBody(file);
+        const parsed = isCollapsed ? { lines: [], hidden: 0 } : parseDiff(body.text);
+        const room = Math.max(0, MAX_DIFF_LINES - drawn);
+        const shown = parsed.lines.slice(0, room);
+        const cut = parsed.lines.length > shown.length;
+        drawn += shown.length;
+        sections.push(
+          React.createElement('div', { key: file.path, className: 'git-diff-section' }, [
+            React.createElement('button', {
+              key: 'h',
               type: 'button',
-              className: 'git-diff-file' + (file.path === selected ? ' is-active' : ''),
-              title: file.original === undefined ? file.path : `${file.original} → ${file.path}`,
-              onClick: () => setSelected(file.path),
+              className: 'git-diff-section-head',
+              ref: (element) => { sectionRefs.current[file.path] = element; },
+              onClick: () => setCollapsed({ ...collapsed, [file.path]: !isCollapsed }),
+              title: isCollapsed ? '展开' : '折叠',
             }, [
+              React.createElement('span', { key: 'c', className: 'git-diff-chevron' }, isCollapsed ? '▶' : '▼'),
               React.createElement('span', { key: 's', className: 'git-diff-status ' + badge.className }, badge.text),
               React.createElement('span', { key: 'p', className: 'git-diff-path' }, file.path),
               file.fromChat === true ? React.createElement('span', { key: 'd', className: 'git-diff-dot', title: '本次对话改过' }) : null,
+              React.createElement('span', { key: 'side', className: 'git-diff-side' }, body.side),
               file.added === undefined ? null
                 : React.createElement('span', { key: 'n', className: 'git-diff-counts' }, `+${file.added}/-${file.deleted}`),
-            ].filter(Boolean));
-          })),
-      );
-
-      const body = [];
-      if (shown.length === 0) {
-        body.push(React.createElement('div', { key: 'none', className: 'git-diff-empty' }, '没有「本次对话」改过的文件'));
-      } else if (diffPhase === 'error') {
-        body.push(React.createElement('div', { key: 'e', className: 'git-diff-note is-error' }, diffError));
-      } else if (diffPhase === 'loading' || diff === null) {
-        body.push(React.createElement('div', { key: 'l', className: 'git-diff-note' }, '正在读 diff…'));
-      } else {
-        const indexText = typeof diff.index === 'string' ? diff.index : '';
-        const worktreeText = typeof diff.worktree === 'string' ? diff.worktree : '';
-        const both = indexText !== '' && worktreeText !== '';
-        const active = both ? (mode === 'index' ? indexText : worktreeText) : worktreeText !== '' ? worktreeText : indexText;
-        const activeName = both ? (mode === 'index' ? '已暂存' : '工作区') : worktreeText !== '' ? '工作区' : '已暂存';
-        if (both) {
-          body.push(React.createElement('div', { key: 'm', className: 'git-diff-modes' }, [
-            React.createElement('button', {
-              key: 'w', type: 'button',
-              className: 'git-diff-btn' + (mode === 'worktree' ? ' is-on' : ''),
-              onClick: () => setMode('worktree'),
-            }, '工作区'),
-            React.createElement('button', {
-              key: 'i', type: 'button',
-              className: 'git-diff-btn' + (mode === 'index' ? ' is-on' : ''),
-              onClick: () => setMode('index'),
-            }, '已暂存'),
-          ]));
-        }
-        if (diff.binary === true) {
-          body.push(React.createElement('div', { key: 'b', className: 'git-diff-note' }, '二进制文件，不展开 diff'));
-        }
-        if (typeof diff.note === 'string' && diff.note !== '') {
-          body.push(React.createElement('div', { key: 'note', className: 'git-diff-note' }, diff.note));
-        }
-        const parsed = parseDiff(active);
-        body.push(
-          React.createElement('div', { key: 'body', className: 'git-diff-body' }, [
-            ...parsed.lines.map((line, index) =>
-              React.createElement('div', { key: index, className: 'git-diff-line is-' + line.type }, [
-                React.createElement('span', { key: 's', className: 'git-diff-sign' },
-                  line.type === 'add' ? '+' : line.type === 'del' ? '-' : ''),
-                React.createElement('span', { key: 't', className: 'git-diff-text' }, line.text),
-              ])),
-            parsed.hidden > 0 || diff.truncated === true
-              ? React.createElement('div', { key: 'trunc', className: 'git-diff-note' },
-                  `（已截断，还有 ${parsed.hidden > 0 ? parsed.hidden + ' 行' : '更多内容'}没显示；完整内容请用 git diff ${activeName === '已暂存' ? '--cached ' : ''}-- ${diff.path}）`)
-              : null,
+            ].filter(Boolean)),
+            ...(isCollapsed ? [] : [
+              file.binary === true
+                ? React.createElement('div', { key: 'b', className: 'git-diff-note' }, '二进制文件，不展开 diff')
+                : null,
+              ...(typeof file.note === 'string' && file.note !== ''
+                ? [React.createElement('div', { key: 'note', className: 'git-diff-note' }, file.note)]
+                : []),
+              React.createElement('div', { key: 'body', className: 'git-diff-body' },
+                shown.map((line, index) =>
+                  React.createElement('div', { key: index, className: 'git-diff-line is-' + line.type }, [
+                    React.createElement('span', { key: 's', className: 'git-diff-sign' },
+                      line.type === 'add' ? '+' : line.type === 'del' ? '-' : ''),
+                    React.createElement('span', { key: 't', className: 'git-diff-text' }, line.text),
+                  ]))),
+              cut || file.truncated === true
+                ? React.createElement('div', { key: 'trunc', className: 'git-diff-note' },
+                    `（已截断${cut ? `，这个文件还有 ${parsed.lines.length - shown.length} 行没显示` : ''}；完整内容用 git diff ${body.side === '已暂存' ? '--cached ' : ''}-- ${file.path}）`)
+                : null,
+            ].filter(Boolean)),
           ].filter(Boolean)),
         );
+        if (drawn >= MAX_DIFF_LINES) {
+          stopped = true;
+          break;
+        }
       }
 
-      return React.createElement('div', { className: 'git-diff-root' }, [...head, ...body]);
+      nodes.push(React.createElement('div', { key: 'sections' }, sections));
+      if (stopped) {
+        nodes.push(React.createElement('div', { key: 'stopped', className: 'git-diff-note' },
+          `已显示到 ${MAX_DIFF_LINES} 行的上限，其余文件没展开；可以折叠上面的文件，或用 git diff 看完整内容。`));
+      }
+      return React.createElement('div', { className: 'git-diff-root' }, nodes);
     }
 
     /** 顶部 tab chip：图标 + 文案。 */
@@ -556,7 +577,7 @@ window.__ModuleLoader__.load({
           }
           if (payload === undefined) {
             throw response.status === 401 || response.status === 404
-              ? new Error('宿主半边还没重启：只读路由（/api/git-ship/status、/diff）没挂上。重启一次 App 就好。')
+              ? new Error('宿主半边还没重启：只读路由（/api/git-ship/diffs）没挂上。重启一次 App 就好。')
               : new Error(`宿主返回了非 JSON（HTTP ${response.status}）`);
           }
           if (payload.ok !== true) {
@@ -566,17 +587,14 @@ window.__ModuleLoader__.load({
           return payload.value;
         };
 
-        const loadStatus = (sessionId) => postJson('/status', { sessionId });
-        const loadDiff = (sessionId, path) => postJson('/diff', { sessionId, path });
+        /** 一次拿全：仓库状态 + 所有文件的 diff（宿主一条 /diffs 路由）。 */
+        const loadDiffs = (sessionId) => postJson('/diffs', { sessionId });
         /** 每个会话一组**身份稳定**的 loader（inject 每次渲染都会调用，不能返回新函数）。 */
         const loaders = new Map();
         const loadersFor = (sessionId) => {
           const existing = loaders.get(sessionId);
           if (existing !== undefined) return existing;
-          const created = {
-            loadStatus: () => loadStatus(sessionId),
-            loadDiff: (path) => loadDiff(sessionId, path),
-          };
+          const created = { loadDiffs: () => loadDiffs(sessionId) };
           loaders.set(sessionId, created);
           return created;
         };

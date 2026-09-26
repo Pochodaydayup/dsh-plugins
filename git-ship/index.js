@@ -19,10 +19,11 @@
  * ⚠️ 和 annotate 插件同一条硬约束：**不能 import `@deepseek-ai/*`**（link: 安装时解析不到），
  * 所以工具定义按 `defineTool()` 编译后的原始 JSON Schema 形状手写，一切从 ctx 上取。
  *
- * 另外还给客户端的 **Git Diff 右侧 tab** 提供两条**只读** HTTP 路由（Web 版没有插件宿主进程
- * 时 tab 拿不到数据，所以走 HTTP 而不是工具）：
- *   POST /api/git-ship/status → 分支 / upstream / 未提交文件（含「本次对话改过」标记）
- *   POST /api/git-ship/diff   → 单个文件的统一 diff（工作区 + 已暂存两段）
+ * 另外还给客户端的 **Git Diff 右侧 tab** 提供一条**只读** HTTP 路由（Web 版没有插件宿主进程时
+ * tab 拿不到数据，所以走 HTTP 而不是工具）：
+ *   POST /api/git-ship/diffs → 分支/upstream + **所有**未提交文件 + **每个文件的 diff**
+ * 一次给全：tab 要「默认全部展开」，分开要点 N 次；而且全量 diff 只要 2 次 git 调用
+ * （`git diff` + `git diff --cached`，按 `diff --git` 切段），比逐文件跑更省。
  * 依旧：只回环、必须带 `x-dsh-git-ship: 1` 标记头、只跑只读 git 命令。
  */
 
@@ -38,6 +39,8 @@ const HEADER = 'x-dsh-git-ship';
 const MAX_BODY_BYTES = 64 * 1024;
 /** 单个文件 diff 的字符上限（超了截断并标注）。 */
 const MAX_DIFF_CHARS = 200_000;
+/** 整份响应里 diff 的总字符上限（超了后面的文件就不展开）。 */
+const MAX_TOTAL_DIFF_CHARS = 2_500_000;
 /** 未跟踪文件合成 diff 时，最多读这么多字节 / 这么多行。 */
 const MAX_UNTRACKED_BYTES = 512 * 1024;
 const MAX_UNTRACKED_LINES = 4000;
@@ -136,6 +139,32 @@ const parseStatus = (out) => {
     files.push({ status, path: filePath, ...(original === undefined ? {} : { original }) });
   }
   return files;
+};
+
+/**
+ * 把一整份 `git diff` 按文件切段。
+ *
+ * 只认**行首**（没有 `+`/`-`/空格前缀）的 `diff --git a/x b/y` —— diff 正文里的行一定带前缀，
+ * 所以正文不可能被误判成段头。
+ * 带特殊字符的路径 git 会用引号包起来，这种这里可能匹配不到：调用方有「单独再跑一次」的兜底。
+ * @returns Map<path, 该文件的整段 diff>
+ */
+const splitByFile = (text) => {
+  const map = new Map();
+  let current = null;
+  let buffer = [];
+  for (const line of text.split('\n')) {
+    const head = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
+    if (head !== null) {
+      if (current !== null) map.set(current, buffer.join('\n'));
+      current = head[2];
+      buffer = [line];
+      continue;
+    }
+    if (current !== null) buffer.push(line);
+  }
+  if (current !== null) map.set(current, buffer.join('\n'));
+  return map;
 };
 
 /** 状态码 → 人话。 */
@@ -421,84 +450,129 @@ export function apply(ctx) {
   );
 
   /**
-   * 读一个文件的 diff。
+   * 读**所有**未提交文件的 diff。
    *
-   * 安全要点：`path` **必须**是这次 `git status` 里真实存在的条目，绝不把客户端给的字符串
-   * 直接塞进 git 参数（否则 `--no-index /etc/passwd` 之类就能把任意文件读出来）。
-   * 未跟踪文件 `git diff` 是空的，这里自己合成一段「全新增」的 diff。
+   * 两次 git 调用拿到全量（工作区 + 已暂存），按 `diff --git` 切段后按路径分给各文件；
+   * 未跟踪文件 `git diff` 是空的，自己合成一段「全新增」；切段没命中的（特殊字符路径等）
+   * 再单独跑一次兜底。
+   *
+   * 安全要点：真正的路径检查在调用方 —— 只处理 `git status` 里出现过的条目，
+   * 不把客户端给的字符串塞进 git 参数。
    */
-  const readDiff = async (repo, wantedPath) => {
-    const entry = repo.files.find((file) => file.path === wantedPath);
-    if (entry === undefined) {
-      return { error: { code: 'not-dirty', message: `这个文件不在未提交列表里：${wantedPath}` } };
-    }
-    const cut = (text) =>
-      text.length > MAX_DIFF_CHARS
-        ? { text: text.slice(0, MAX_DIFF_CHARS), truncated: true }
-        : { text, truncated: false };
-    const base = { path: entry.path, status: entry.status, label: statusLabel(entry.status) };
+  const readAllDiffs = async (repo) => {
+    const worktreeAll = await git(['diff', '--no-color', '-M'], repo.root);
+    const indexAll = await git(['diff', '--cached', '--no-color', '-M'], repo.root);
+    const worktreeMap = splitByFile(worktreeAll.stdout);
+    const indexMap = splitByFile(indexAll.stdout);
 
-    // 未跟踪：合成一段「全新增」的 diff
-    if (entry.status.indexOf('?') >= 0) {
-      const absolute = resolve(repo.root, entry.path);
-      // 双保险：不能跑出仓库（status 里的路径理论上都在里面，但不赌）
-      if (absolute !== repo.root && !absolute.startsWith(repo.root + sep)) {
-        return { error: { code: 'outside', message: '这个路径不在仓库里' } };
-      }
-      let buffer;
-      try {
-        const stats = await stat(absolute);
-        if (stats.size > MAX_UNTRACKED_BYTES) {
-          return {
-            ...base,
-            worktree: '',
-            index: '',
-            binary: false,
-            truncated: true,
-            note: `文件 ${stats.size} 字节，超过 ${MAX_UNTRACKED_BYTES} 字节，不在这里展开`,
-          };
+    const cut = (text) => {
+      const value = typeof text === 'string' ? text : '';
+      return value.length > MAX_DIFF_CHARS
+        ? { text: value.slice(0, MAX_DIFF_CHARS), truncated: true }
+        : { text: value, truncated: false };
+    };
+
+    const files = [];
+    let budget = MAX_TOTAL_DIFF_CHARS;
+    for (const entry of repo.files) {
+      const base = {
+        path: entry.path,
+        status: entry.status,
+        label: statusLabel(entry.status),
+        ...(entry.original === undefined ? {} : { original: entry.original }),
+      };
+
+      // 未跟踪：合成「全新增」
+      if (entry.status.indexOf('?') >= 0) {
+        if (budget <= 0) {
+          files.push({ ...base, worktree: '', index: '', binary: false, truncated: true, note: '总输出已达上限，未展开' });
+          continue;
         }
-        buffer = await readFile(absolute);
-      } catch (error) {
-        return { error: { code: 'unreadable', message: `读不了这个文件：${String(error && error.message ? error.message : error)}` } };
-      }
-      if (buffer.subarray(0, 8192).includes(0)) {
-        return { ...base, worktree: '', index: '', binary: true, truncated: false };
-      }
-      const lines = buffer.toString('utf8').split('\n');
-      const capped = lines.slice(0, MAX_UNTRACKED_LINES);
-      const body = capped.map((line) => `+${line}`).join('\n');
-      const hacked = {
-        text: [
+        const absolute = resolve(repo.root, entry.path);
+        if (absolute !== repo.root && !absolute.startsWith(repo.root + sep)) {
+          files.push({ ...base, worktree: '', index: '', binary: false, truncated: false, note: '这个路径不在仓库里，没展开' });
+          continue;
+        }
+        let buffer;
+        try {
+          const stats = await stat(absolute);
+          if (stats.size > MAX_UNTRACKED_BYTES) {
+            files.push({
+              ...base, worktree: '', index: '', binary: false, truncated: true,
+              note: `文件 ${stats.size} 字节，超过 ${MAX_UNTRACKED_BYTES} 字节，不在这里展开`,
+            });
+            continue;
+          }
+          buffer = await readFile(absolute);
+        } catch (error) {
+          files.push({
+            ...base, worktree: '', index: '', binary: false, truncated: false,
+            note: `读不了这个文件：${String(error && error.message ? error.message : error)}`,
+          });
+          continue;
+        }
+        if (buffer.subarray(0, 8192).includes(0)) {
+          files.push({ ...base, worktree: '', index: '', binary: true, truncated: false });
+          continue;
+        }
+        const lines = buffer.toString('utf8').split('\n');
+        const capped = lines.slice(0, MAX_UNTRACKED_LINES);
+        const text = [
           `diff --git a/${entry.path} b/${entry.path}`,
           'new file mode 100644',
           '--- /dev/null',
           `+++ b/${entry.path}`,
           `@@ -0,0 +1,${capped.length} @@`,
-          body,
-        ].join('\n'),
-        truncated: lines.length > capped.length,
-      };
-      return { ...base, worktree: hacked.text, index: '', binary: false, truncated: hacked.truncated, untracked: true };
-    }
+          capped.map((line) => `+${line}`).join('\n'),
+        ].join('\n');
+        const piece = cut(text);
+        budget -= piece.text.length;
+        files.push({
+          ...base,
+          worktree: piece.text,
+          index: '',
+          binary: false,
+          untracked: true,
+          truncated: piece.truncated || lines.length > capped.length,
+        });
+        continue;
+      }
 
-    const paths = entry.original === undefined ? [entry.path] : [entry.original, entry.path];
-    const useRename = entry.original === undefined ? [] : ['-M'];
-    const worktree = await git(['diff', '--no-color', ...useRename, '--', ...paths], repo.root);
-    const index = await git(['diff', '--cached', '--no-color', ...useRename, '--', ...paths], repo.root);
-    if (!worktree.ok && !index.ok) {
-      return { error: { code: 'diff-failed', message: firstLine(worktree.stderr || index.stderr) || worktree.message } };
+      // 已跟踪：先从全量切段里取，取不到再单独跑（特殊字符路径 / 改名等）
+      const candidates = entry.original === undefined ? [entry.path] : [entry.path, entry.original];
+      const pick = (map) => {
+        for (const candidate of candidates) {
+          const found = map.get(candidate);
+          if (found !== undefined && found !== '') return found;
+        }
+        return '';
+      };
+      let worktreeText = pick(worktreeMap);
+      let indexText = pick(indexMap);
+      let fallbackTruncated = false;
+      if (worktreeText === '' && indexText === '') {
+        const extraWorktree = await git(['diff', '--no-color', '-M', '--', ...candidates], repo.root);
+        const extraIndex = await git(['diff', '--cached', '--no-color', '-M', '--', ...candidates], repo.root);
+        worktreeText = extraWorktree.ok ? extraWorktree.stdout : '';
+        indexText = extraIndex.ok ? extraIndex.stdout : '';
+        fallbackTruncated = !extraWorktree.ok && !extraIndex.ok;
+      }
+      const worktreePiece = cut(worktreeText);
+      const indexPiece = cut(indexText);
+      budget -= worktreePiece.text.length + indexPiece.text.length;
+      if (budget <= 0) {
+        files.push({ ...base, worktree: '', index: '', binary: false, truncated: true, note: '总输出已达上限，未展开' });
+        continue;
+      }
+      files.push({
+        ...base,
+        worktree: worktreePiece.text,
+        index: indexPiece.text,
+        binary: /Binary files|GIT binary patch/.test(worktreePiece.text + indexPiece.text),
+        truncated: worktreePiece.truncated || indexPiece.truncated || fallbackTruncated,
+      });
     }
-    const worktreeCut = cut(worktree.stdout);
-    const indexCut = cut(index.stdout);
-    return {
-      ...base,
-      worktree: worktreeCut.text,
-      index: indexCut.text,
-      binary: /Binary files|GIT binary patch/.test(worktree.stdout + index.stdout),
-      truncated: worktreeCut.truncated || indexCut.truncated,
-      ...(entry.original === undefined ? {} : { original: entry.original }),
-    };
+    return files;
   };
 
   ctx.effect(
@@ -524,8 +598,8 @@ export function apply(ctx) {
               fail(res, 405, 'method', `只支持 POST（收到 ${req.method} ${path}）`);
               return;
             }
-            if (path !== `${ROUTE_PREFIX}/status` && path !== `${ROUTE_PREFIX}/diff`) {
-              fail(res, 404, 'not-found', `未知路由 ${req.method} ${path}（只有只读的 /status 与 /diff）`);
+            if (path !== `${ROUTE_PREFIX}/diffs`) {
+              fail(res, 404, 'not-found', `未知路由 ${req.method} ${path}（只有只读的 /diffs）`);
               return;
             }
             let body;
@@ -545,51 +619,48 @@ export function apply(ctx) {
               fail(res, 409, repo.error.code, repo.error.message);
               return;
             }
-            if (path === `${ROUTE_PREFIX}/status`) {
-              const chat = chatFilesOf(sessionId, repo.cwd);
-              const files = repo.files.slice(0, MAX_FILES).map((file) => {
-                const chatInfo = chat.merged.get(resolve(repo.root, file.path));
-                return {
-                  path: file.path,
-                  status: file.status,
-                  label: statusLabel(file.status),
-                  ...(file.original === undefined ? {} : { original: file.original }),
-                  fromChat: chatInfo !== undefined,
-                  ...(chatInfo === undefined || chatInfo.added === undefined ? {} : { added: chatInfo.added }),
-                  ...(chatInfo === undefined || chatInfo.deleted === undefined ? {} : { deleted: chatInfo.deleted }),
-                };
-              });
-              sendJson(res, 200, {
-                ok: true,
-                value: {
-                  cwd: repo.cwd,
-                  root: repo.root,
-                  branch: repo.branch,
-                  detached: repo.detached,
-                  upstream: repo.upstream,
-                  ahead: repo.ahead,
-                  behind: repo.behind,
-                  files,
-                  total: repo.files.length,
-                  truncated: repo.files.length > files.length,
-                  chatKnown: chat.known,
-                  chatReason: chat.reason,
-                  fromChat: files.filter((file) => file.fromChat).length,
-                },
-              });
-              return;
-            }
-            const wanted = typeof body.path === 'string' ? body.path : '';
-            if (wanted === '') {
-              fail(res, 400, 'bad-request', '缺 path');
-              return;
-            }
-            const diff = await readDiff(repo, wanted);
-            if (diff.error !== undefined) {
-              fail(res, 409, diff.error.code, diff.error.message);
-              return;
-            }
-            sendJson(res, 200, { ok: true, value: diff });
+            const chat = chatFilesOf(sessionId, repo.cwd);
+            // 只喂 git status 里真实存在的条目给 diff 读取器（路径白名单在这里收口）
+            const limited = repo.files.slice(0, MAX_FILES);
+            const diffs = await readAllDiffs({ ...repo, files: limited });
+            const byPath = new Map(diffs.map((file) => [file.path, file]));
+            const files = limited.map((file) => {
+              const chatInfo = chat.merged.get(resolve(repo.root, file.path));
+              const diff = byPath.get(file.path);
+              return {
+                path: file.path,
+                status: file.status,
+                label: statusLabel(file.status),
+                ...(file.original === undefined ? {} : { original: file.original }),
+                fromChat: chatInfo !== undefined,
+                ...(chatInfo === undefined || chatInfo.added === undefined ? {} : { added: chatInfo.added }),
+                ...(chatInfo === undefined || chatInfo.deleted === undefined ? {} : { deleted: chatInfo.deleted }),
+                worktree: diff === undefined ? '' : diff.worktree,
+                index: diff === undefined ? '' : diff.index,
+                binary: diff !== undefined && diff.binary === true,
+                truncated: diff !== undefined && diff.truncated === true,
+                ...(diff === undefined || diff.untracked !== true ? {} : { untracked: true }),
+                ...(diff === undefined || diff.note === undefined ? {} : { note: diff.note }),
+              };
+            });
+            sendJson(res, 200, {
+              ok: true,
+              value: {
+                cwd: repo.cwd,
+                root: repo.root,
+                branch: repo.branch,
+                detached: repo.detached,
+                upstream: repo.upstream,
+                ahead: repo.ahead,
+                behind: repo.behind,
+                files,
+                total: repo.files.length,
+                truncated: repo.files.length > files.length,
+                chatKnown: chat.known,
+                chatReason: chat.reason,
+                fromChat: files.filter((file) => file.fromChat).length,
+              },
+            });
           })().catch((error) => {
             try {
               fail(res, 500, 'internal', String(error && error.message ? error.message : error));
@@ -602,6 +673,6 @@ export function apply(ctx) {
   );
 
   console.log(
-    `[dsh-git-ship] host half ready: prompt + git_ship_changes + ${ROUTE_PREFIX}/{status,diff}（全部只读，不做 git 写操作）`,
+    `[dsh-git-ship] host half ready: prompt + git_ship_changes + ${ROUTE_PREFIX}/diffs（全部只读，不做 git 写操作）`,
   );
 }
