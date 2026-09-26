@@ -70,19 +70,21 @@ window.__ModuleLoader__.load({
 .git-ship-btn:disabled { color: var(--dsw-alias-label-tertiary); cursor: default; }
 
 /* ── Git Diff tab ───────────────────────────────────────────────────── */
+/* 字号**跟着 App 的字号设置走**（--dsh-content-font-size 由主题服务按用户设置写入，默认 14px），
+   不写死 px，这样用户在设置里调大字号，diff 也跟着变大。 */
 .git-diff-root { display: flex; flex-direction: column; flex: auto; height: 100%; min-height: 0; overflow: hidden;
-  font-size: 12px; color: var(--dsw-alias-label-primary); }
+  font-size: var(--dsh-content-font-size-secondary, 13px); color: var(--dsw-alias-label-primary); }
 .git-diff-scroll { flex: 1; min-height: 0; overflow: auto; background: var(--dsw-alias-bg-base); }
 .git-diff-head { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
   border-bottom: 1px solid var(--dsw-alias-border-l3); flex: none; min-width: 0; }
 .git-diff-repo { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--dsw-alias-label-secondary); font-size: 11px; }
-.git-diff-chip { flex: none; padding: 1px 6px; border-radius: 999px; font-size: 10px; line-height: 16px;
+  color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.git-diff-chip { flex: none; padding: 1px 7px; border-radius: 999px; font-size: 11px; line-height: 18px;
   background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-secondary); }
 .git-diff-chip.is-chat { color: var(--dsw-alias-state-business-primary); }
-.git-diff-btn { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px;
+.git-diff-btn { flex: none; display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 9px;
   border: 1px solid var(--dsw-alias-border-l3); border-radius: var(--dsw-radius-sm); background: transparent;
-  color: var(--dsw-alias-label-secondary); font: inherit; font-size: 11px; cursor: pointer; }
+  color: var(--dsw-alias-label-secondary); font: inherit; font-size: 12px; cursor: pointer; }
 .git-diff-btn:hover:not(:disabled) { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
 .git-diff-btn:disabled { color: var(--dsw-alias-label-tertiary); cursor: default; }
 .git-diff-btn.is-on { color: var(--dsw-alias-state-business-primary); border-color: currentColor; }
@@ -96,41 +98,44 @@ window.__ModuleLoader__.load({
 
 /* 文件段：浅色头（不是厚重的灰条），sticky 在滚动容器顶部 */
 .git-diff-section { border-bottom: 1px solid var(--dsw-alias-border-l3); }
-.git-diff-section-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 5px 8px;
-  border: none; background: var(--dsw-alias-bg-layer-1); color: inherit; font: inherit; font-size: 12px;
+.git-diff-section-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 9px;
+  border: none; background: var(--dsw-alias-bg-layer-1); color: inherit; font: inherit;
+  font-size: var(--dsh-content-font-size-secondary, 13px);
   cursor: pointer; text-align: left; min-width: 0; position: sticky; top: 0; z-index: 2;
   border-bottom: 1px solid var(--dsw-alias-border-l3); }
 .git-diff-section-head:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.git-diff-chevron { flex: none; width: 9px; color: var(--dsw-alias-label-tertiary); font-size: 9px; }
-.git-diff-badge { flex: none; min-width: 18px; height: 15px; padding: 0 3px; border-radius: 3px;
-  font-size: 9px; line-height: 15px; text-align: center; font-weight: 600;
+.git-diff-chevron { flex: none; width: 10px; color: var(--dsw-alias-label-tertiary); font-size: 10px; }
+.git-diff-badge { flex: none; min-width: 20px; height: 17px; padding: 0 3px; border-radius: 3px;
+  font-size: 10px; line-height: 17px; text-align: center; font-weight: 600;
   background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-secondary); }
 .git-diff-badge.is-ts { color: var(--dsw-alias-label-primary-bluish, var(--dsw-alias-state-business-primary)); }
 .git-diff-badge.is-js { color: var(--dsw-alias-state-warn-label); }
 .git-diff-badge.is-css, .git-diff-badge.is-html { color: var(--dsw-alias-state-business-primary); }
-.git-diff-status { flex: none; width: 12px; text-align: center; font-weight: 600; font-size: 10px;
+.git-diff-status { flex: none; width: 13px; text-align: center; font-weight: 600; font-size: 11px;
   color: var(--dsw-alias-label-tertiary); }
 .git-diff-status.is-add { color: var(--dsw-alias-state-success-primary); }
 .git-diff-status.is-del { color: var(--dsw-alias-state-error-primary); }
 .git-diff-status.is-mod { color: var(--dsw-alias-state-warn-label); }
 .git-diff-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  text-align: left; font-family: var(--dsw-font-family-mono, ui-monospace, monospace); font-size: 11.5px; }
-.git-diff-counts { flex: none; font-size: 10.5px; font-family: var(--dsw-font-family-mono, ui-monospace, monospace); }
+  text-align: left; font-family: var(--dsw-font-family-mono, ui-monospace, monospace);
+  font-size: var(--dsh-content-font-size-secondary, 13px); }
+.git-diff-counts { flex: none; font-size: 12px; font-family: var(--dsw-font-family-mono, ui-monospace, monospace); }
 .git-diff-counts .add { color: var(--dsw-alias-state-success-primary); }
 .git-diff-counts .del { color: var(--dsw-alias-state-error-primary); }
 .git-diff-dot { flex: none; width: 6px; height: 6px; border-radius: 999px;
   background: var(--dsw-alias-state-business-primary); }
-.git-diff-side { flex: none; font-size: 10px; padding: 0 5px; border-radius: 999px;
+.git-diff-side { flex: none; font-size: 11px; padding: 0 6px; border-radius: 999px;
   background: var(--dsw-alias-bg-layer-3); color: var(--dsw-alias-label-tertiary); }
 
 .git-diff-body { font-family: var(--dsw-font-family-mono, ui-monospace, monospace); }
 /* 一行 = [行号][符号][代码]；整行按内容撑开，横向也能滚 */
-.git-diff-line { display: flex; white-space: pre; min-width: max-content; font-size: 11.5px; line-height: 18px; }
-.git-diff-line > .git-diff-gutter { flex: none; width: 44px; padding-right: 8px; text-align: right;
+.git-diff-line { display: flex; white-space: pre; min-width: max-content;
+  font-size: var(--dsh-content-font-size-secondary, 13px); line-height: 1.65; }
+.git-diff-line > .git-diff-gutter { flex: none; width: 50px; padding-right: 9px; text-align: right;
   /* 行号是要读的：用 secondary。dimmed 是色板里最淡的一档（浅色主题下 #e1e5ee），做正文完全看不清 */
   color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-tertiary)); user-select: none;
   background: color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent); }
-.git-diff-line > .git-diff-sign { flex: none; width: 14px; text-align: center; user-select: none;
+.git-diff-line > .git-diff-sign { flex: none; width: 16px; text-align: center; user-select: none;
   color: var(--dsw-alias-label-tertiary); }
 .git-diff-line > .git-diff-text { flex: none; padding-right: 12px; }
 .git-diff-line.is-add { background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 13%, transparent); }
@@ -153,12 +158,12 @@ window.__ModuleLoader__.load({
 
 /* 「N 行未修改」折叠条 */
 .git-diff-fold { display: flex; align-items: center; gap: 8px; padding: 3px 8px 3px 4px;
-  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-tertiary)); font-size: 11.5px;
-  cursor: pointer; user-select: none;
+  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-tertiary));
+  font-size: var(--dsh-content-font-size-secondary, 13px); cursor: pointer; user-select: none;
   background: var(--dsw-alias-bg-layer-1); }
 .git-diff-fold:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-secondary); }
-.git-diff-fold-icon { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 16px;
-  border: 1px solid var(--dsw-alias-border-l3); border-radius: 3px; font-size: 8px; line-height: 1; }
+.git-diff-fold-icon { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 17px;
+  border: 1px solid var(--dsw-alias-border-l3); border-radius: 3px; font-size: 9px; line-height: 1; }
 `;
 
     const ensureCss = () => {
