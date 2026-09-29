@@ -1,0 +1,15 @@
+{
+  "name": "@local/dsh-opencode-session",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "给发往 OpenCode 网关的请求补 x-opencode-session 头（宿主原生 fetch 层）：修 web 搜索 400 missing x-opencode-session",
+  "exports": {
+    ".": "./index.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

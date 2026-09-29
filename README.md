@@ -7,6 +7,7 @@
 |---|---|---|
 | [`annotate-starter/`](./annotate-starter) | 右侧边栏的「标注浏览器」tab：自建 webview，点页面元素写批注；消息正文只留一行 chip，详情（选择器/坐标/截图）存宿主侧，模型用 `browser_annotations` 工具读回 | 右侧边栏 `+` → 标注浏览器 |
 | [`git-ship/`](./git-ship) | 输入框上方的「提交并推送」：点一下**直接**发一条正文只有 `@提交并推送` 的消息，由 AI 分析本次对话的改动后执行 `git add/commit/push` | 输入框上方那一条 |
+| [`opencode-session/`](./opencode-session) | 在宿主原生 `fetch` 外面包一层，给发往 `opencode.ai` 的请求补 `x-opencode-session` 头：修 web 搜索的 `400 Request is missing x-opencode-session`，顺带让对话请求也带上会话信息 | 无界面，装上即生效（Host 半边，需重启） |
 
 文档：[`QUICKSTART.md`](./QUICKSTART.md) 上手流程；[`dsh-plugin-annotation-guide.md`](./dsh-plugin-annotation-guide.md)
 是插件机制的**实测记录**（chip/reference 机制、dock 插槽对齐、`nativeImage` 崩溃、
