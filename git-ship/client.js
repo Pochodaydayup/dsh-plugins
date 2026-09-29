@@ -43,6 +43,8 @@ window.__ModuleLoader__.load({
     const COLLAPSE_MIN = 6;
     /** 轮询间隔：只在「tab 可见 + 窗口聚焦」时按这个间隔重读（没有开关，一直开）。 */
     const POLL_MS = 3000;
+    /** dock 上那条「提交并推送」多久检查一次仓库脏不脏（轻量 /status，不带 diff）。 */
+    const DOCK_CHECK_MS = 5000;
 
     // ────────────────────────────────────────────────────────────── 样式
 
@@ -219,7 +221,52 @@ window.__ModuleLoader__.load({
     function GitShipBar(props) {
       ensureCss();
       const sendNow = props.sendNow;
+      const checkRepo = props.checkRepo;
       const [busy, setBusy] = React.useState(false);
+      /**
+       * 仓库脏不脏：null = 还不知道；0 = 干净（这条整个不渲染）；>0 = 有改动（显示）。
+       * 注意是「干净才隐藏」而不是「不知道就隐藏」—— 宿主路由没挂上（比如刚装完没重启）
+       * 或读取失败时，按钮留着更有用（点了照样能把那条消息发出去）。
+       */
+      const [dirtyCount, setDirtyCount] = React.useState(null);
+      const checkerRef = React.useRef(checkRepo);
+      checkerRef.current = checkRepo;
+      const inFlightRef = React.useRef(false);
+      const check = React.useCallback(async () => {
+        if (typeof checkerRef.current !== 'function' || inFlightRef.current) return;
+        inFlightRef.current = true;
+        try {
+          const value = await checkerRef.current();
+          const total = value === undefined || value.total === undefined ? undefined : value.total;
+          if (typeof total === 'number') setDirtyCount(total);
+        } catch (error) {
+          // 读不到就不隐藏（见上面那段注释）
+        } finally {
+          inFlightRef.current = false;
+        }
+      }, []);
+
+      /**
+       * 什么时候查：挂载时一次 + 每 5 秒一次（`document.visibilityState` 为 hidden 时跳过）
+       * + 窗口重新获得焦点时一次。不做别的：`git status` 很轻，但也别在后台空转。
+       */
+      React.useEffect(() => {
+        check();
+        const timer = window.setInterval(() => {
+          if (document.visibilityState === 'hidden') return;
+          check();
+        }, DOCK_CHECK_MS);
+        const onFocus = () => check();
+        window.addEventListener('focus', onFocus);
+        return () => {
+          window.clearInterval(timer);
+          window.removeEventListener('focus', onFocus);
+        };
+      }, [check]);
+
+      // 干净（确实有 0 个未提交文件）→ 什么都不渲染
+      if (dirtyCount === 0) return null;
+
       const onClick = () => {
         if (busy || typeof sendNow !== 'function') return;
         setBusy(true);
@@ -241,7 +288,10 @@ window.__ModuleLoader__.load({
               type: 'button',
               className: 'git-ship-btn',
               disabled: busy,
-              title: '直接发一条「提交并推送」消息：AI 会分析本次对话的改动并执行 git',
+              title:
+                typeof dirtyCount === 'number'
+                  ? `工作区有 ${dirtyCount} 个未提交文件；直接发一条「提交并推送」消息，AI 分析后执行 git`
+                  : '直接发一条「提交并推送」消息：AI 会分析本次对话的改动并执行 git',
               onClick,
             },
             [
@@ -956,12 +1006,17 @@ window.__ModuleLoader__.load({
 
         /** 一次拿全：仓库状态 + 所有文件的 diff（宿主一条 /diffs 路由）。 */
         const loadDiffs = (sessionId) => postJson('/diffs', { sessionId });
+        /** 轻量：只问仓库脏不脏（dock 每 5 秒问一次的那条）。 */
+        const loadStatus = (sessionId) => postJson('/status', { sessionId });
         /** 每个会话一组**身份稳定**的 loader（inject 每次渲染都会调用，不能返回新函数）。 */
         const loaders = new Map();
         const loadersFor = (sessionId) => {
           const existing = loaders.get(sessionId);
           if (existing !== undefined) return existing;
-          const created = { loadDiffs: () => loadDiffs(sessionId) };
+          const created = {
+            loadDiffs: () => loadDiffs(sessionId),
+            checkRepo: () => loadStatus(sessionId),
+          };
           loaders.set(sessionId, created);
           return created;
         };
@@ -977,6 +1032,7 @@ window.__ModuleLoader__.load({
               inject: (sessionId) => ({
                 sessionId,
                 sendNow: (fromProps) => sendNow(sessionId, fromProps),
+                checkRepo: loadersFor(sessionId).checkRepo,
               }),
             },
             GitShipBar,

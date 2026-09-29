@@ -642,8 +642,8 @@ export function apply(ctx) {
               fail(res, 405, 'method', `只支持 POST（收到 ${req.method} ${path}）`);
               return;
             }
-            if (path !== `${ROUTE_PREFIX}/diffs`) {
-              fail(res, 404, 'not-found', `未知路由 ${req.method} ${path}（只有只读的 /diffs）`);
+            if (path !== `${ROUTE_PREFIX}/diffs` && path !== `${ROUTE_PREFIX}/status`) {
+              fail(res, 404, 'not-found', `未知路由 ${req.method} ${path}（只有只读的 /status 与 /diffs）`);
               return;
             }
             let body;
@@ -664,13 +664,8 @@ export function apply(ctx) {
               return;
             }
             const chat = chatFilesOf(sessionId, repo.cwd);
-            // 只喂 git status 里真实存在的条目给 diff 读取器（路径白名单在这里收口）
-            const limited = repo.files.slice(0, MAX_FILES);
-            const diffs = await readAllDiffs({ ...repo, files: limited });
-            const byPath = new Map(diffs.map((file) => [file.path, file]));
-            const files = limited.map((file) => {
+            const marked = repo.files.slice(0, MAX_FILES).map((file) => {
               const chatInfo = chat.merged.get(resolve(repo.root, file.path));
-              const diff = byPath.get(file.path);
               return {
                 path: file.path,
                 status: file.status,
@@ -679,6 +674,35 @@ export function apply(ctx) {
                 fromChat: chatInfo !== undefined,
                 ...(chatInfo === undefined || chatInfo.added === undefined ? {} : { added: chatInfo.added }),
                 ...(chatInfo === undefined || chatInfo.deleted === undefined ? {} : { deleted: chatInfo.deleted }),
+              };
+            });
+            // 轻量：只回状态（算 diff 要跑 2 次 git diff + 读未跟踪文件，dock 每几秒问一次不值当）
+            if (path === `${ROUTE_PREFIX}/status`) {
+              sendJson(res, 200, {
+                ok: true,
+                value: {
+                  cwd: repo.cwd,
+                  root: repo.root,
+                  branch: repo.branch,
+                  upstream: repo.upstream,
+                  ahead: repo.ahead,
+                  behind: repo.behind,
+                  files: marked,
+                  total: repo.files.length,
+                  chatKnown: chat.known,
+                  fromChat: marked.filter((file) => file.fromChat).length,
+                },
+              });
+              return;
+            }
+            // 只喂 git status 里真实存在的条目给 diff 读取器（路径白名单在这里收口）
+            const limited = repo.files.slice(0, MAX_FILES);
+            const diffs = await readAllDiffs({ ...repo, files: limited });
+            const byPath = new Map(diffs.map((file) => [file.path, file]));
+            const files = marked.map((file) => {
+              const diff = byPath.get(file.path);
+              return {
+                ...file,
                 worktree: diff === undefined ? '' : diff.worktree,
                 index: diff === undefined ? '' : diff.index,
                 binary: diff !== undefined && diff.binary === true,
