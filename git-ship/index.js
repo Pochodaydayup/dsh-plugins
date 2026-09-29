@@ -357,7 +357,7 @@ export function apply(ctx) {
    */
   const cwdOf = async (sessionId) => {
     const known = cwdBySession.get(sessionId);
-    if (known !== undefined) return known;
+    if (known !== undefined) return { cwd: known, source: 'session' };
 
     let live;
     try {
@@ -368,7 +368,7 @@ export function apply(ctx) {
     if (live !== undefined) {
       rememberCwd(live);
       const cwd = live.header === undefined ? undefined : live.header.cwd;
-      if (typeof cwd === 'string' && cwd !== '') return cwd;
+      if (typeof cwd === 'string' && cwd !== '') return { cwd, source: 'session' };
     }
 
     try {
@@ -377,7 +377,7 @@ export function apply(ctx) {
       const cwd = stored === undefined || stored.header === undefined ? undefined : stored.header.cwd;
       if (typeof cwd === 'string' && cwd !== '') {
         cwdBySession.set(sessionId, cwd);
-        return cwd;
+        return { cwd, source: 'session' };
       }
     } catch (error) {
       /* 没有持久化服务 / 读失败 → 继续兜底 */
@@ -386,7 +386,8 @@ export function apply(ctx) {
     const fallback = ctx.sandboxPolicy === undefined ? undefined : ctx.sandboxPolicy.workspaceRoot;
     if (typeof fallback === 'string' && fallback !== '') {
       console.log(`[dsh-git-ship] 会话 ${sessionId} 没有工作目录，退回进程默认工作区 ${fallback}`);
-      return fallback;
+      // source 必须说清楚是兜底来的：客户端要靠它决定「这条仓库到底是不是这个会话的」
+      return { cwd: fallback, source: 'sandbox' };
     }
     return undefined;
   };
@@ -428,7 +429,9 @@ export function apply(ctx) {
 
   /** 读一次仓库状态（纯只读命令）。 */
   const readRepo = async (sessionId) => {
-    const cwd = await cwdOf(sessionId);
+    const resolved = await cwdOf(sessionId);
+    const cwd = resolved === undefined ? undefined : resolved.cwd;
+    const cwdSource = resolved === undefined ? undefined : resolved.source;
     if (cwd === undefined) {
       return {
         error: {
@@ -468,6 +471,7 @@ export function apply(ctx) {
     }
     return {
       cwd,
+      cwdSource,
       root,
       branch: branchResult.ok ? branchResult.stdout.trim() : 'HEAD（游离）',
       detached: !branchResult.ok,
@@ -682,6 +686,7 @@ export function apply(ctx) {
                 ok: true,
                 value: {
                   cwd: repo.cwd,
+                  cwdSource: repo.cwdSource,
                   root: repo.root,
                   branch: repo.branch,
                   upstream: repo.upstream,
@@ -715,6 +720,7 @@ export function apply(ctx) {
               ok: true,
               value: {
                 cwd: repo.cwd,
+                cwdSource: repo.cwdSource,
                 root: repo.root,
                 branch: repo.branch,
                 detached: repo.detached,

@@ -224,9 +224,12 @@ window.__ModuleLoader__.load({
       const checkRepo = props.checkRepo;
       const [busy, setBusy] = React.useState(false);
       /**
-       * 仓库脏不脏：null = 还不知道；0 = 干净（这条整个不渲染）；>0 = 有改动（显示）。
-       * 注意是「干净才隐藏」而不是「不知道就隐藏」—— 宿主路由没挂上（比如刚装完没重启）
-       * 或读取失败时，按钮留着更有用（点了照样能把那条消息发出去）。
+       * 这条到底该不该出现 —— 只有**确认了**「这个会话的仓库确实有未提交改动」才显示：
+       *   · 读成功 + cwd 是**会话给的**（'session'；'sandbox' 是宿主兜底的默认工作区，
+       *     那说明这个会话还没有工作目录 —— 新对话就是这种）+ total > 0；
+       *   · 会话事件窗口为空（新开的对话还没任何事件）也不显示；
+       *   · 非 git 仓库：宿主回 409 not-a-repo → 没有成功结果 → 不显示；
+       *   · 其它失败（路由没挂上 / 网络 / 401）→ 也不显示（宁可少显示，不要谎报有改动）。
        */
       const [dirtyCount, setDirtyCount] = React.useState(null);
       const checkerRef = React.useRef(checkRepo);
@@ -238,9 +241,11 @@ window.__ModuleLoader__.load({
         try {
           const value = await checkerRef.current();
           const total = value === undefined || value.total === undefined ? undefined : value.total;
-          if (typeof total === 'number') setDirtyCount(total);
+          const fromSession = value !== undefined && value.cwdSource === 'session';
+          setDirtyCount(typeof total === 'number' && fromSession ? total : 0);
         } catch (error) {
-          // 读不到就不隐藏（见上面那段注释）
+          // 读不到（非 git 仓库 / 会话还没工作目录 / 路由没挂上）→ 当作「没有改动」，不显示
+          setDirtyCount(0);
         } finally {
           inFlightRef.current = false;
         }
@@ -264,8 +269,15 @@ window.__ModuleLoader__.load({
         };
       }, [check]);
 
-      // 干净（确实有 0 个未提交文件）→ 什么都不渲染
-      if (dirtyCount === 0) return null;
+      // 新开的对话：事件窗口存在但一条都没有 → 还没开始，不显示
+      //（形状不认识时 entries 不是数组 → 不拿它做判断，退回宿主给的信息）
+      const snapshot = props.session;
+      const entries = snapshot === undefined || snapshot === null ? undefined : snapshot.entries;
+      const started = Array.isArray(entries) ? entries.length > 0 : undefined;
+      if (started === false) return null;
+
+      // 只有**确认到有改动**才渲染：null（还没查完/不确定）和 0（干净）都不显示
+      if (typeof dirtyCount !== 'number' || dirtyCount === 0) return null;
 
       const onClick = () => {
         if (busy || typeof sendNow !== 'function') return;
